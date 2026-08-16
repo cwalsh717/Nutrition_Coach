@@ -1,145 +1,92 @@
 # Prep Coach
 
-Multi-user meal-prep planner with a weekly **calorie bank**: plan recipes and staples
-for the week, review a shopping list item-by-item (Need it / Have it), track what you
-actually eat, and talk to an AI coach that only knows what *you* told it.
-
-Built to `PROJECT_SPEC.md` (v2). The v1 single-user Python app lives in git history
-(`git tag v1`).
+Multi-user meal-prep planner with a weekly **calorie bank**: plan recipes and
+staples for the week, review the shopping list item by item (Need / Have),
+track what you actually eat, and talk to an AI coach that only knows what you
+told it.
 
 ## Core ideas
 
-- **Zero seeded data.** Every account starts empty: no pantry list, no staples,
-  no default targets. Whatever number the app was first built around belonged
-  to one person — onboarding *suggests* a bank from your own vitals
-  (Mifflin-St Jeor) and you drag a slider to whatever you'll actually stick to.
-- **The user decides everything on the shopping list.** No automated
-  "you probably have salt so we removed it." Items are only *sorted* so likely
-  buys come first; you tap Need or Have on each one.
-- **Bank over days.** Easy to overeat one day, hard to overeat a week you
-  planned and bought. The bank meter shows planned kcal vs your weekly target;
-  the Track page shows spent kcal vs the same bank.
-- **Weeks are snapshots.** A week copies your targets at creation, and list
-  items / week staples are value copies — finishing a week freezes it forever.
+- **Zero seeded data.** Every account starts empty: no pantry list, no
+  staples, no default targets. Onboarding *suggests* a calorie bank from your
+  own vitals (Mifflin-St Jeor) and you drag a slider to whatever you'll
+  actually stick to.
+- **The user decides everything on the shopping list.** No automated "you
+  probably have salt so we removed it." Items are only *sorted* so likely buys
+  come first; each one gets a Need or Have decision.
+- **Bank over days.** It's easy to overeat one day and hard to overeat a week
+  that was planned and bought as one bank. The bank meter shows planned kcal
+  vs the weekly target; Track shows spent kcal against the same bank.
+- **Plans and records are separate.** The food diary and weigh-ins belong to
+  the user and a date, not to a week plan — tracking works whether or not
+  anything was planned. Finished weeks freeze their numbers forever.
 
 ## Stack
 
 Next.js 16 (App Router, TypeScript) · Tailwind v4 + shadcn/ui · Prisma 7 +
-PostgreSQL · better-auth (email/password) · Anthropic API (`claude-sonnet-4-6`)
-for recipe parsing, food estimates, and the coach.
+PostgreSQL · better-auth (email/password) · Anthropic API for recipe parsing,
+food estimates, and the coach.
 
-## Run it locally
+## Local development
 
-You need Node 20+ (this machine uses nvm) and Postgres
-([Postgres.app](https://postgresapp.com) — open it, click Initialize).
+Requires Node 20+ and PostgreSQL.
 
 ```bash
 npm install
-cp .env.example .env   # fill in ANTHROPIC_API_KEY; set DATABASE_URL user to your macOS username
-npx prisma migrate dev # creates/updates the local database
-npm run dev            # http://localhost:3000
+cp .env.example .env      # set DATABASE_URL, ANTHROPIC_API_KEY, BETTER_AUTH_SECRET
+npx prisma migrate deploy # apply migrations
+npm run dev               # http://localhost:3000
 ```
 
-Useful commands:
-
-| Command | What it does |
+| Command | Purpose |
 |---|---|
 | `npm run dev` | Dev server with hot reload |
-| `npx prisma studio` | GUI to inspect the database |
-| `npx prisma migrate dev --name x` | After editing `prisma/schema.prisma` |
-| `npm test` | Unit tests for the pure logic (shopping merge, bank math, BMR) |
+| `npm test` | Unit tests for the pure logic (bank math, energy math, shopping merge) |
+| `npx prisma studio` | Database GUI |
+| `npx prisma generate` | Regenerate the client after schema changes |
 
-## Where things live
+`launchd/com.prepcoach.plist` is an optional macOS agent that keeps the dev
+server running permanently; edit its paths before installing.
+
+## Layout
 
 ```
-prisma/schema.prisma      the entire data model, one readable file
-src/lib/
-  targets.ts              BMR → suggested weekly bank (pure, tested)
-  shopping.ts             merge/sort/group/export list logic (pure, tested)
-  weekmath.ts             bank + protein math (pure, tested)
-  claude/                 the three AI calls: parse-recipe, coach, estimate-food
-  auth.ts, session.ts     better-auth config + requireUser()
-  db.ts                   Prisma client singleton
-src/actions/              server actions (all mutations; every one calls requireUser)
-src/app/(app)/            the app pages: week, week/list, week/track, week/chat,
-                          cookbook, ingest, staples, profile, weeks
-src/app/onboarding/       goal → vitals → bank-slider wizard
+prisma/schema.prisma      the data model
+prisma/migrations/        hand-written SQL migrations
+src/lib/                  pure, unit-tested logic (targets, energy, progress,
+                          shopping, week math) + auth config and db client
+src/lib/claude/           the three AI calls: parse-recipe, coach, estimate-food
+src/actions/              server actions — every mutation, all ownership-checked
+src/app/                  pages and API routes
 src/components/           React components (ui/ = shadcn primitives)
 ```
 
-## Python-to-JS translation table (for the owner)
+Architecture notes:
 
-| Python habit | Here |
-|---|---|
-| `pip install` / requirements.txt | `npm install` / package.json |
-| venv | `node_modules/` (gitignored, recreated by npm install) |
-| pydantic | Zod (`z.object(...)` in `src/lib/claude/*`) |
-| alembic / migrate.py | `npx prisma migrate dev` |
-| f-strings | template literals `` `${x}` `` |
-| `sqlite3.connect()` per request | one shared Prisma client (`src/lib/db.ts`) |
+- Pages fetch and render; all writes go through server actions that begin
+  with `requireUser()`. The middleware cookie check is UX only — `requireUser()`
+  is the security boundary.
+- Modules that touch secrets import `"server-only"`, so importing them from
+  client code fails the build.
+- AI calls use strict-JSON prompts validated with Zod; a failed parse returns
+  a typed error and never loses the user's input.
 
-Two Next.js concepts worth knowing:
+## Deploy (Railway)
 
-1. **Server vs client components.** Pages fetch data on the server. Any file
-   starting with `"use client"` runs in the browser (state, clicks). If you see
-   "useState only works in a Client Component," add that directive or move the
-   interactive bit to its own small client file.
-2. **Two-layer auth.** `src/middleware.ts` only checks a cookie *exists* (fast
-   redirect UX). The real gate is `requireUser()` at the top of every page and
-   server action. Don't remove either.
-
-Security notes: secrets never get a `NEXT_PUBLIC_` prefix; files that touch the
-API key or DB import `"server-only"` so accidentally importing them from browser
-code fails the build; server actions never trust IDs from the client without
-checking the row belongs to the session user.
-
-## Deploy to Railway
-
-Two routes. The CLI one needs no GitHub account; the GitHub one gets you
-auto-deploy on every push. You can start with the CLI and add GitHub later.
-
-### A. Straight from this folder (Railway CLI)
-
-```bash
-railway login                       # opens a browser
-railway init                        # creates the project
-railway add --database postgres     # Postgres in the same project
-railway up                          # builds and deploys this directory
-```
-
-Then set the service variables (Railway dashboard → your service → Variables):
+Connect the GitHub repo (**New Project → Deploy from GitHub repo**), add a
+PostgreSQL service, and set the app variables:
 
 | Variable | Value |
 |---|---|
-| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` — a reference, typed literally |
-| `ANTHROPIC_API_KEY` | your key; every user's AI calls bill to it |
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` |
+| `ANTHROPIC_API_KEY` | your key — every user's AI calls bill to it |
 | `BETTER_AUTH_SECRET` | `openssl rand -base64 32` |
-| `BETTER_AUTH_URL` | `https://<your-domain>` — the domain from the next step |
+| `BETTER_AUTH_URL` | the public domain (Settings → Networking → Generate Domain) |
 
-Finally, Settings → Networking → **Generate Domain**, put that URL into
-`BETTER_AUTH_URL`, and redeploy. Log-in breaks if that variable is wrong or
-missing, so it's the one to double-check.
+Every push to `main` deploys. `npm start` runs `prisma migrate deploy` before
+booting, so schema changes ship themselves. Login breaks if `BETTER_AUTH_URL`
+doesn't match the public domain — it's the variable to double-check.
 
-### B. GitHub (auto-deploy on push)
-
-Create an empty repo on github.com, then:
-
-```bash
-git remote add origin https://github.com/<you>/prepcoach.git
-git push -u origin main
-```
-
-In Railway: **New Project → Deploy from GitHub repo**, add PostgreSQL to the
-same project, and set the same variables as above.
-
-### Notes
-
-- `npm start` runs `prisma migrate deploy` before booting, so schema changes
-  ship themselves on every deploy. No volume needed — Postgres is the
-  persistence story.
-- Local data does **not** come along. Production starts empty; sign up fresh.
-- `.env` is gitignored and excluded from `railway up`. Secrets only ever live
-  in Railway's Variables tab.
-- Signup is open to anyone with the URL. If it travels further than intended,
-  the cheapest fixes are an invite-code check on signup, an `ALLOW_SIGNUPS`
-  env flag, or a per-user daily cap on AI calls.
+Signup is open to anyone with the URL. The cheapest ways to limit that are an
+invite-code check on signup, an `ALLOW_SIGNUPS` env flag, or a per-user daily
+cap on AI calls.

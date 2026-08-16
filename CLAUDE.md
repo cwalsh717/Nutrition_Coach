@@ -10,11 +10,11 @@ planned, bought, and are watching. Users plan weeks of recipes, review a
 shopping list item by item, track what they actually eat, weigh in, and watch
 weekly wins stack toward a goal weight.
 
-- **Dev**: this machine, `http://localhost:3000`, kept alive by a launchd
-  agent (`com.prepcoach`) — never start a second server; logs at
-  `~/Library/Logs/prepcoach.log`. Postgres runs in Postgres.app.
-- **Production**: Railway, deployed from GitHub. `git push` IS the release
-  process; the `start` script runs `prisma migrate deploy` first, so
+- **Dev**: `http://localhost:3000`, kept alive by a launchd agent
+  (`com.prepcoach`) — never start a second server; logs at
+  `~/Library/Logs/prepcoach.log`. Postgres runs locally.
+- **Production**: Railway, deployed from GitHub. `git push` to `main` IS the
+  release process; the `start` script runs `prisma migrate deploy` first, so
   migrations ship themselves.
 
 ## Note: Next.js here is newer than your training data
@@ -81,12 +81,5 @@ framework code. Heed deprecation notices.
   delete, those tables only grow.
 - Never seed data into any account, including test accounts on shared DBs.
 - Never `git push` without being asked — a push deploys to production.
-- Real user data stays out of tests and fixtures; tests run on synthetic
-  numbers only.
-
-## Working style
-
-Owner is a beginner coder, learning by reading the diffs. Explain approaches
-in prose before large changes; keep diffs small; comment the *why*; state
-assumptions out loud. When a task seems to need a stack change, stop and say
-so instead of adding it.
+- Real user data stays out of tests, fixtures, docs, and commit messages;
+  tests run on synthetic numbers only.
