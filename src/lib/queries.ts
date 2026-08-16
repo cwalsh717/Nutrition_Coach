@@ -7,7 +7,7 @@ import type { CandidateRow } from "./shopping";
 import { currentWeek, defaultWeek, tabOrder, weekEnd, type WeekStatus } from "./weeks";
 import {
   effectiveMaintenance, formulaMaintenance, impliedMaintenance, impliedWindow,
-  weightTrendLbPerWeek, type EffectiveMaintenance, type WeighIn,
+  weighInSpanDays, weightTrendLbPerWeek, type EffectiveMaintenance, type WeighIn,
 } from "./energy";
 import type { Activity, Sex } from "./targets";
 
@@ -95,6 +95,8 @@ export interface EnergyStatus {
   weighIns: WeighIn[];
   latestWeightLb: number | null;
   trendLbPerWeek: number | null;
+  /** Calendar days between first and last weigh-in — gates trend display. */
+  weighInSpanDays: number;
   bankToleranceKcal: number;
 }
 
@@ -155,8 +157,7 @@ export async function getEnergyStatus(userId: string): Promise<EnergyStatus> {
         consumedKcal: log
           .filter((e) => eatingDays.has(e.date.toISOString().slice(0, 10)))
           .reduce((sum, e) => sum + e.kcal, 0),
-        loggedDays: eatingDays.size,
-        windowDays: eatingDays.size,
+        days: eatingDays.size,
         lbChange: byWeight.get(window.end)! - byWeight.get(window.start)!,
       });
     }
@@ -172,6 +173,7 @@ export async function getEnergyStatus(userId: string): Promise<EnergyStatus> {
     weighIns,
     latestWeightLb: latest?.weightLb ?? null,
     trendLbPerWeek: weightTrendLbPerWeek(weighIns),
+    weighInSpanDays: weighInSpanDays(weighIns),
     bankToleranceKcal: profile?.bankToleranceKcal ?? 500,
   };
 }
@@ -348,6 +350,13 @@ export async function buildProgressSection(userId: string): Promise<string> {
   if (logRows.length === 0) return "Progress: nothing logged yet.";
 
   const { calendarWeeks, cumulativeDeficit, verdictFor, winStreak } = await import("./progress");
+  const { resolveGoal } = await import("./goal");
+  const goal = resolveGoal({
+    goalType: profile?.goalType ?? null,
+    goalWeightLb: profile?.goalWeightLb ?? null,
+    baselineLb: energy.weighIns[0]?.weightLb ?? profile?.weightLb ?? null,
+    latestLb: energy.latestWeightLb,
+  });
   const weeks = calendarWeeks(
     logRows.map((e) => ({
       date: e.date.toISOString().slice(0, 10),
@@ -360,6 +369,7 @@ export async function buildProgressSection(userId: string): Promise<string> {
       bankKcal: profile?.weeklyKcalBudget ?? null,
       toleranceKcal: energy.bankToleranceKcal,
       maintenanceKcal: energy.maintenance.value,
+      direction: goal.direction,
     }),
   );
 
@@ -374,7 +384,14 @@ export async function buildProgressSection(userId: string): Promise<string> {
     `  Cumulative ${deficit >= 0 ? "deficit" : "surplus"} banked: ${Math.abs(deficit)} kcal (~${Math.abs(Math.round((deficit / 3500) * 10) / 10)} lb).`,
   );
   const streak = winStreak(weeks);
-  lines.push(`  Win streak: ${streak} finished week${streak === 1 ? "" : "s"} in a row at or under the bank.`);
+  const winPhrase =
+    goal.direction === "gain"
+      ? "at or over the bank (a gainer's bank is a floor)"
+      : goal.direction === "maintain"
+        ? "inside the tolerance band"
+        : "at or under the bank";
+  lines.push(`  Goal direction: ${goal.direction}.`);
+  lines.push(`  Win streak: ${streak} finished week${streak === 1 ? "" : "s"} in a row ${winPhrase}.`);
   if (energy.latestWeightLb !== null) {
     lines.push(
       `  Latest weigh-in: ${energy.latestWeightLb} lb${energy.trendLbPerWeek !== null ? `, trending ${energy.trendLbPerWeek} lb/week` : ""}.`,

@@ -2,36 +2,51 @@
 // small SVG polyline rather than a chart library. Every mark has a title
 // attribute, so hovering gives the exact numbers.
 //
-// Colour carries meaning, not identity: parchment = under the bank (a deficit,
-// the goal), terracotta = over. Reference lines and grid stay recessive.
+// Colour carries meaning, not identity — and the meaning follows the user's
+// DIRECTION: parchment marks progress toward the goal (a deficit for a loser,
+// a surplus for a gainer, steadiness for a maintainer), terracotta marks
+// movement away from it. The scale math lives in lib/chartmath, tested.
 
 import { cn } from "@/lib/utils";
-import type { Band } from "@/lib/progress";
+import type { Band, DayState, WeekVerdict, WinsRow } from "@/lib/progress";
+import type { Direction } from "@/lib/goal";
+import { bandTone } from "@/lib/goal";
+import { deltaBarPct, niceTicks, weightDomain } from "@/lib/chartmath";
 
-/* ---------------- The goal burn-down (the hero) ---------------- */
+/* ---------------- The goal race (the hero) ---------------- */
 
-export function BurnDownBar({
-  totalKcal, byCaloriesKcal, byScaleKcal,
+/**
+ * Two thin bars against the same scale: the food log's story and the scale's
+ * story of the same journey. Values are progress-signed (positive = toward
+ * the goal, whichever way it points) — negative progress renders as a real
+ * wrong-direction bar, never as an empty track pretending nothing happened.
+ */
+export function GoalRaceBar({
+  totalKcal, byCaloriesKcal, byScaleKcal, direction,
 }: {
   totalKcal: number;
   byCaloriesKcal: number;
   byScaleKcal: number | null;
+  direction: "lose" | "gain";
 }) {
-  const pct = (v: number) => Math.min(Math.max((v / totalKcal) * 100, 0), 100);
-
+  const verb = direction === "lose" ? "burned" : "banked";
   return (
     <div className="space-y-1.5">
-      {/* Two thin bars against the same scale, so the food log's story and
-          the scale's story are visually comparable. */}
-      <Track label="calories say" filledPct={pct(byCaloriesKcal)} value={byCaloriesKcal} />
+      <Track label="calories say" totalKcal={totalKcal} value={byCaloriesKcal} verb={verb} />
       {byScaleKcal !== null && (
-        <Track label="scale says" filledPct={pct(byScaleKcal)} value={byScaleKcal} />
+        <Track label="scale says" totalKcal={totalKcal} value={byScaleKcal} verb={verb} />
       )}
     </div>
   );
 }
 
-function Track({ label, filledPct, value }: { label: string; filledPct: number; value: number }) {
+function Track({
+  label, totalKcal, value, verb,
+}: {
+  label: string; totalKcal: number; value: number; verb: string;
+}) {
+  const pct = totalKcal <= 0 ? 0 : Math.min((Math.abs(value) / totalKcal) * 100, 100);
+  const wrongWay = value < 0;
   return (
     <div className="flex items-center gap-3">
       <div className="w-24 shrink-0 text-right text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
@@ -39,11 +54,15 @@ function Track({ label, filledPct, value }: { label: string; filledPct: number; 
       </div>
       <div
         className="h-3 flex-1 overflow-hidden rounded-full bg-muted"
-        title={`${Math.max(value, 0).toLocaleString()} kcal burned so far`}
+        title={
+          wrongWay
+            ? `${Math.abs(value).toLocaleString()} kcal in the wrong direction`
+            : `${value.toLocaleString()} kcal ${verb} toward the goal`
+        }
       >
         <div
-          className={cn("h-full rounded-full", value >= 0 ? "bg-primary" : "bg-destructive")}
-          style={{ width: `${Math.abs(filledPct)}%` }}
+          className={cn("h-full rounded-full", wrongWay ? "bg-destructive" : "bg-primary")}
+          style={{ width: `${pct}%` }}
         />
       </div>
     </div>
@@ -52,117 +71,157 @@ function Track({ label, filledPct, value }: { label: string; filledPct: number; 
 
 /* ---------------- Weekly wins (one row per calendar week) ---------------- */
 
-export interface WeekRow {
-  label: string; // "Jul 26 – Aug 1"
-  /** Positive = under the bank. Null = no bank set. */
-  delta: number | null;
-  consumed: number;
-  bank: number | null;
-  band: Band | null;
-  isWin: boolean | null;
-  avgPerDay: number | null;
-  loggedDays: number;
-  elapsedDays: number;
-  untrackedDays: number;
-  inProgress: boolean;
-}
-
 const BAND_LABEL: Record<Band, string> = {
   on_target: "on target",
   under: "under",
   over: "over",
 };
 
-export function WeeklyWins({ rows }: { rows: WeekRow[] }) {
-  const max = Math.max(...rows.map((r) => Math.abs(r.delta ?? 0)), 1);
+const TONE_TEXT = {
+  good: "text-primary",
+  bad: "text-destructive",
+  neutral: "text-muted-foreground",
+} as const;
 
+const TONE_CHIP = {
+  good: "border-primary/50 text-primary",
+  bad: "border-destructive/50 text-destructive",
+  neutral: "text-muted-foreground",
+} as const;
+
+export interface WinsDisplayRow {
+  row: WinsRow<WeekVerdict>;
+  /** Pre-formatted by the page (year added when not current). */
+  label: string;
+}
+
+/**
+ * The wins list. Bars run on a FIXED scale — a full half-track is one pound
+ * of bank delta — so this week's bar and last month's bar mean the same
+ * thing. Which side is "good" follows the direction.
+ */
+export function WeeklyWins({
+  rows, direction, olderCount, showAllHref,
+}: {
+  rows: WinsDisplayRow[];
+  direction: Direction;
+  olderCount: number;
+  showAllHref?: string;
+}) {
   return (
     <div className="space-y-2.5">
-      {rows.map((row) => {
-        const under = (row.delta ?? 0) >= 0;
-        const width = row.delta === null ? 0 : (Math.abs(row.delta) / max) * 50;
-        const expected = row.elapsedDays - row.untrackedDays;
-        const coverage =
-          row.loggedDays < expected ? `${row.loggedDays}/${expected} days logged` : null;
-        const off = row.untrackedDays > 0 ? `${row.untrackedDays} off` : null;
+      {rows.map(({ row, label }) => {
+        if (row.kind === "new-week") {
+          return (
+            <p key={`new-${row.weekOf}`} className="py-1 text-xs text-muted-foreground">
+              New week — nothing logged yet.
+            </p>
+          );
+        }
+        if (row.kind === "gap") {
+          return (
+            <p key={`gap-${row.from}`} className="py-1 text-xs text-muted-foreground/70">
+              {row.weeks} week{row.weeks === 1 ? "" : "s"} with no logging · {label}
+            </p>
+          );
+        }
+        if (row.kind === "off-week") {
+          return (
+            <p key={`off-${row.week.weekOf}`} className="py-1 text-xs text-muted-foreground">
+              {label} — marked not tracked. Counts nowhere, breaks nothing.
+            </p>
+          );
+        }
+
+        const week = row.week;
+        const tone = week.band === null ? "neutral" : bandTone(week.band, direction);
+        const under = (week.bankDelta ?? 0) >= 0;
+        const width = deltaBarPct(week.bankDelta);
+        const clamped = week.bankDelta !== null && Math.abs(week.bankDelta) > 3500;
+
         return (
-          <div key={row.label} className="flex items-center gap-3">
-            {/* Verdict mark: ✓ win, ✗ loss, ○ still running or not scorable */}
+          <div key={week.weekOf} className="flex items-center gap-3">
             <div
               className={cn(
                 "w-5 shrink-0 text-center font-display text-base",
-                row.isWin === true && "text-primary",
-                row.isWin === false && "text-destructive",
-                row.isWin === null && "text-muted-foreground/60",
+                week.isWin === true && "text-primary",
+                week.isWin === false && "text-destructive",
+                week.isWin === null && "text-muted-foreground/60",
               )}
               title={
-                row.inProgress
+                week.inProgress
                   ? "still running"
-                  : row.isWin === true
+                  : week.isWin === true
                     ? "win"
-                    : row.isWin === false
+                    : week.isWin === false
                       ? "loss"
                       : "not scored — days missing or no bank"
               }
             >
-              {row.isWin === true ? "✓" : row.isWin === false ? "✗" : "○"}
+              {week.isWin === true ? "✓" : week.isWin === false ? "✗" : "○"}
             </div>
 
             <div className="w-28 shrink-0 text-xs">
               <div className="text-muted-foreground">
-                {row.label}
-                {row.inProgress && <span className="text-primary"> · now</span>}
+                {label}
+                {week.inProgress && <span className="text-primary"> · now</span>}
               </div>
               <div className="text-[10px] text-muted-foreground/70">
-                {row.avgPerDay !== null && `${row.avgPerDay.toLocaleString()}/day`}
-                {coverage && ` · ${coverage}`}
-                {off && ` · ${off}`}
+                {week.avgKcalPerLoggedDay !== null &&
+                  `${week.avgKcalPerLoggedDay.toLocaleString()}/day`}
+                {week.missedDays > 0 &&
+                  ` · ${week.missedDays} day${week.missedDays === 1 ? "" : "s"} missing`}
+                {week.untrackedDays > 0 && ` · ${week.untrackedDays} off`}
               </div>
             </div>
 
             <div className="relative h-7 flex-1">
               <div className="absolute inset-y-0 left-1/2 w-px bg-border" />
-              {row.delta !== null && (
+              {width !== null && (
                 <div
-                  title={`${row.consumed.toLocaleString()} eaten of ${row.bank!.toLocaleString()}${row.inProgress ? " so far" : ""}`}
+                  title={`${week.consumedKcal.toLocaleString()} eaten of ${week.bankSoFarKcal!.toLocaleString()}${week.inProgress ? " so far" : ""}${clamped ? " (bar capped at 1 lb)" : ""}`}
                   className={cn(
                     "absolute top-1/2 h-4 -translate-y-1/2",
-                    under ? "left-1/2 rounded-r bg-primary" : "right-1/2 rounded-l bg-destructive",
-                    row.inProgress && "opacity-50",
+                    under ? "left-1/2 rounded-r" : "right-1/2 rounded-l",
+                    tone === "good" ? "bg-primary" : tone === "bad" ? "bg-destructive" : "bg-muted-foreground/40",
+                    week.inProgress && "opacity-50",
                   )}
-                  style={{ width: `${width}%` }}
-                />
+                  style={{ width: `${width! / 2}%` }}
+                >
+                  {clamped && (
+                    <span
+                      className={cn(
+                        "absolute top-0 h-full w-0.5 bg-background",
+                        under ? "right-0" : "left-0",
+                      )}
+                    />
+                  )}
+                </div>
               )}
             </div>
 
             <div className="flex w-36 shrink-0 items-center justify-end gap-2">
-              {row.band !== null && (
+              {week.band !== null && (
                 <span
                   className={cn(
                     "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide",
-                    row.band === "on_target" && "border-primary/50 text-primary",
-                    row.band === "under" && "text-muted-foreground",
-                    row.band === "over" && "border-destructive/50 text-destructive",
+                    TONE_CHIP[tone],
                   )}
                 >
-                  {BAND_LABEL[row.band]}
+                  {BAND_LABEL[week.band]}
                 </span>
               )}
-              {row.delta !== null && (
-                <span
-                  className={cn(
-                    "text-sm tabular-nums",
-                    under ? "text-primary" : "text-destructive",
-                  )}
-                >
+              {week.bankDelta !== null && (
+                <span className={cn("text-sm tabular-nums", TONE_TEXT[tone])}>
                   {under ? "−" : "+"}
-                  {Math.abs(row.delta).toLocaleString()}
+                  {Math.abs(week.bankDelta).toLocaleString()}
                 </span>
               )}
             </div>
           </div>
         );
       })}
+
       <div className="flex items-center gap-3 pt-1">
         <div className="w-5 shrink-0" />
         <div className="w-28 shrink-0" />
@@ -172,6 +231,12 @@ export function WeeklyWins({ rows }: { rows: WeekRow[] }) {
         </div>
         <div className="w-36 shrink-0" />
       </div>
+
+      {olderCount > 0 && showAllHref && (
+        <a href={showAllHref} className="block pt-1 text-xs text-muted-foreground underline">
+          Show {olderCount} older week{olderCount === 1 ? "" : "s"}
+        </a>
+      )}
     </div>
   );
 }
@@ -181,10 +246,16 @@ export function WeeklyWins({ rows }: { rows: WeekRow[] }) {
 export interface DayBar {
   label: string;
   kcal: number;
-  logged: boolean;
+  state: DayState;
   isToday?: boolean;
 }
 
+/**
+ * One bar per day. A logged day is always parchment — a big day inside a
+ * winning week is the whole point of banking weekly, so the chart doesn't
+ * scold it. The other three states are visually distinct facts: a missed day
+ * (dashed outline), a day off (small muted tick), a future day (nothing).
+ */
 export function DailyChart({ days, rate }: { days: DayBar[]; rate: number | null }) {
   const max = Math.max(...days.map((d) => d.kcal), rate ?? 0, 1);
   const ratePct = rate === null ? null : (rate / max) * 100;
@@ -192,7 +263,6 @@ export function DailyChart({ days, rate }: { days: DayBar[]; rate: number | null
   return (
     <div>
       <div className="relative flex h-48 items-end gap-2">
-        {/* daily allowance reference line */}
         {ratePct !== null && (
           <div
             className="pointer-events-none absolute inset-x-0 border-t border-dashed border-muted-foreground/50"
@@ -203,29 +273,33 @@ export function DailyChart({ days, rate }: { days: DayBar[]; rate: number | null
             </span>
           </div>
         )}
-        {days.map((day) => {
-          const over = rate !== null && day.kcal > rate;
-          return (
-            // h-full so the bar's percentage height has a definite parent to
-            // resolve against — otherwise it collapses to nothing.
-            <div key={day.label} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
-              {day.kcal > 0 && (
-                <span className="text-[10px] tabular-nums text-muted-foreground">
-                  {day.kcal.toLocaleString()}
-                </span>
-              )}
+        {days.map((day) => (
+          <div key={day.label} className="flex h-full flex-1 flex-col items-center justify-end gap-1">
+            {day.state === "logged" && day.kcal > 0 && (
+              <span className="text-[10px] tabular-nums text-muted-foreground">
+                {day.kcal.toLocaleString()}
+              </span>
+            )}
+            {day.state === "logged" && (
               <div
-                title={day.logged ? `${day.kcal.toLocaleString()} kcal` : "nothing logged"}
-                className={cn(
-                  "w-full rounded-t",
-                  !day.logged && "bg-muted",
-                  day.logged && (over ? "bg-destructive" : "bg-primary"),
-                )}
-                style={{ height: `${Math.max((day.kcal / max) * 100, day.logged ? 2 : 1)}%` }}
+                title={`${day.kcal.toLocaleString()} kcal`}
+                className="w-full rounded-t bg-primary"
+                style={{ height: `${Math.max((day.kcal / max) * 100, 2)}%` }}
               />
-            </div>
-          );
-        })}
+            )}
+            {day.state === "empty" && (
+              <div
+                title="not logged — unknown, not zero"
+                className="w-full rounded-t border border-dashed border-muted-foreground/40"
+                style={{ height: "14%" }}
+              />
+            )}
+            {day.state === "untracked" && (
+              <div title="marked not tracked" className="w-full rounded-t bg-muted" style={{ height: "4%" }} />
+            )}
+            {/* future days render nothing — they haven't happened */}
+          </div>
+        ))}
       </div>
       <div className="mt-2 flex gap-2">
         {days.map((day) => (
@@ -234,6 +308,7 @@ export function DailyChart({ days, rate }: { days: DayBar[]; rate: number | null
             className={cn(
               "flex-1 text-center text-[10px]",
               day.isToday ? "font-semibold text-foreground" : "text-muted-foreground",
+              day.state === "untracked" && "line-through opacity-60",
             )}
           >
             {day.label}
@@ -252,61 +327,109 @@ export interface WeightPoint {
 }
 
 /**
- * A polyline rather than bars: weigh-ins are a trend around a narrow range,
- * and bars anchored at zero would flatten a 5 lb move into invisibility.
- * The y-axis spans the data plus the goal, padded so the line breathes.
+ * The line is SVG (stretchy, non-scaling stroke so it doesn't fatten on wide
+ * screens); the dots are HTML positioned by percentage so they stay round —
+ * a stretched SVG circle renders as an ellipse. Y-domain zooms to the
+ * readings (lib/chartmath): a far-away goal lives in the corner annotation
+ * the page renders, not inside the scale, where it would flatten months of
+ * progress into a straight line.
  */
-export function WeightChart({ points, goalLb }: { points: WeightPoint[]; goalLb: number | null }) {
-  const W = 600;
-  const H = 160;
-  const PAD = 8;
-
-  const values = [...points.map((p) => p.weightLb), ...(goalLb !== null ? [goalLb] : [])];
-  const lo = Math.min(...values) - 2;
-  const hi = Math.max(...values) + 2;
+export function WeightChart({
+  points, goalLb, band,
+}: {
+  points: WeightPoint[];
+  goalLb: number | null;
+  /** Steadiness band for maintainers: shaded ± range around the baseline. */
+  band?: { centerLb: number; halfLb: number };
+}) {
+  const domain = weightDomain(
+    [...points.map((p) => p.weightLb), ...(band ? [band.centerLb + band.halfLb, band.centerLb - band.halfLb] : [])],
+    goalLb,
+  );
+  const { lo, hi } = domain;
+  const ticks = niceTicks(lo, hi);
 
   const t0 = Date.parse(points[0].date);
   const t1 = Date.parse(points.at(-1)!.date);
   const span = Math.max(t1 - t0, 1);
 
-  const x = (date: string) => PAD + ((Date.parse(date) - t0) / span) * (W - 2 * PAD);
-  const y = (lb: number) => PAD + ((hi - lb) / (hi - lo)) * (H - 2 * PAD);
+  // Percent coordinates shared by the SVG (viewBox 0..100) and the HTML dots.
+  const xPct = (date: string) => ((Date.parse(date) - t0) / span) * 100;
+  const yPct = (lb: number) => ((hi - lb) / (hi - lo)) * 100;
 
-  const line = points.map((p) => `${x(p.date).toFixed(1)},${y(p.weightLb).toFixed(1)}`).join(" ");
+  const line = points.map((p) => `${xPct(p.date).toFixed(2)},${yPct(p.weightLb).toFixed(2)}`).join(" ");
 
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-40 w-full" preserveAspectRatio="none">
-        {goalLb !== null && (
-          <line
-            x1={0} x2={W} y1={y(goalLb)} y2={y(goalLb)}
-            className="stroke-muted-foreground/50" strokeWidth="1" strokeDasharray="4 4"
-          />
-        )}
-        {points.length > 1 && (
-          <polyline
-            points={line}
-            fill="none"
-            className="stroke-primary"
-            strokeWidth="2"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        )}
-        {points.map((p) => (
-          <circle
-            key={p.date}
-            cx={x(p.date)} cy={y(p.weightLb)} r="3.5"
-            className="fill-primary"
+    <div className="flex gap-2">
+      {/* y-axis gutter */}
+      <div className="relative w-8 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
+        {ticks.map((t) => (
+          <span
+            key={t}
+            className="absolute right-0 -translate-y-1/2"
+            style={{ top: `${yPct(t)}%` }}
           >
-            <title>{`${p.weightLb} lb — ${p.date}`}</title>
-          </circle>
+            {t}
+          </span>
         ))}
-      </svg>
-      <div className="flex justify-between text-[10px] text-muted-foreground">
-        <span>{prettyShort(points[0].date)}</span>
-        {goalLb !== null && <span>goal {goalLb} lb</span>}
-        <span>{prettyShort(points.at(-1)!.date)}</span>
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="relative h-40">
+          <svg viewBox="0 0 100 100" className="h-full w-full" preserveAspectRatio="none">
+            {band && (
+              <rect
+                x="0"
+                width="100"
+                y={yPct(band.centerLb + band.halfLb)}
+                height={yPct(band.centerLb - band.halfLb) - yPct(band.centerLb + band.halfLb)}
+                className="fill-primary/10"
+              />
+            )}
+            {ticks.map((t) => (
+              <line
+                key={t}
+                x1="0" x2="100" y1={yPct(t)} y2={yPct(t)}
+                className="stroke-border" strokeWidth="1" vectorEffect="non-scaling-stroke"
+              />
+            ))}
+            {domain.goalInline && goalLb !== null && (
+              <line
+                x1="0" x2="100" y1={yPct(goalLb)} y2={yPct(goalLb)}
+                className="stroke-muted-foreground/60" strokeWidth="1.5"
+                strokeDasharray="4 4" vectorEffect="non-scaling-stroke"
+              />
+            )}
+            {points.length > 1 && (
+              <polyline
+                points={line}
+                fill="none"
+                className="stroke-primary"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            )}
+          </svg>
+          {points.map((p, i) => {
+            const prev = i > 0 ? points[i - 1].weightLb : null;
+            const delta = prev === null ? null : Math.round((p.weightLb - prev) * 10) / 10;
+            return (
+              <div
+                key={p.date}
+                title={`${p.weightLb} lb — ${prettyShort(p.date)}${delta !== null ? ` (${delta > 0 ? "+" : ""}${delta} from last)` : ""}`}
+                className="absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary"
+                style={{ left: `${xPct(p.date)}%`, top: `${yPct(p.weightLb)}%` }}
+              />
+            );
+          })}
+        </div>
+        <div className="flex justify-between text-[10px] text-muted-foreground">
+          <span>{prettyShort(points[0].date)}</span>
+          {domain.goalInline && goalLb !== null && <span>goal {goalLb} lb</span>}
+          <span>{prettyShort(points.at(-1)!.date)}</span>
+        </div>
       </div>
     </div>
   );

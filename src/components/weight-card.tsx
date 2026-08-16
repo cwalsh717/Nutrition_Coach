@@ -32,8 +32,26 @@ export function WeightCard({ entries, today }: { entries: WeightRow[]; today: st
     });
   }
 
+  const [showAll, setShowAll] = useState(false);
   // Newest first for the list; the chart elsewhere reads them oldest-first.
-  const recent = [...entries].reverse().slice(0, 6);
+  const newestFirst = [...entries].reverse();
+  const recent = showAll ? newestFirst : newestFirst.slice(0, 6);
+  const hidden = newestFirst.length - 6;
+  // The oldest reading anchors the whole goal countdown.
+  const baselineId = entries[0]?.id;
+
+  function remove(entry: WeightRow) {
+    if (
+      entry.id === baselineId &&
+      entries.length > 1 &&
+      !window.confirm(
+        "This is your first weigh-in — the baseline the goal countdown starts from. Deleting it re-anchors all the progress math to the next reading. Delete anyway?",
+      )
+    ) {
+      return;
+    }
+    startTransition(() => deleteWeight(entry.id));
+  }
 
   return (
     <div className="space-y-3">
@@ -68,7 +86,7 @@ export function WeightCard({ entries, today }: { entries: WeightRow[]; today: st
               <span className="flex items-center gap-2">
                 <span className="tabular-nums">{entry.weightLb} lb</span>
                 <button
-                  onClick={() => startTransition(() => deleteWeight(entry.id))}
+                  onClick={() => remove(entry)}
                   className="p-1 text-muted-foreground hover:text-destructive"
                   aria-label={`Delete weigh-in from ${entry.date}`}
                 >
@@ -77,6 +95,14 @@ export function WeightCard({ entries, today }: { entries: WeightRow[]; today: st
               </span>
             </div>
           ))}
+          {!showAll && hidden > 0 && (
+            <button
+              onClick={() => setShowAll(true)}
+              className="pt-1 text-left text-xs text-muted-foreground underline"
+            >
+              Show all {newestFirst.length} weigh-ins
+            </button>
+          )}
         </div>
       )}
     </div>
