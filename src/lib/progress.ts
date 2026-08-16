@@ -199,20 +199,50 @@ export function verdictFor(
   };
 }
 
+/** A finished week that was entirely marked not-tracked. */
+function isOffWeek(w: WeekVerdict): boolean {
+  return w.loggedDays === 0 && w.elapsedDays > 0 && w.untrackedDays >= w.elapsedDays;
+}
+
 /**
  * Wins in a row, counting back from the most recent FINISHED week. The week
  * you're in never counts — it isn't over — but it doesn't break the run
- * either. An unjudgeable week (unknown days, no bank) does break it: we
- * can't honestly call it a win.
+ * either. A week deliberately marked off is SKIPPED: "counts nowhere,
+ * breaks nothing" has to include the streak. An unjudgeable week (unknown
+ * days, no bank) does break it: we can't honestly call it a win.
  */
 export function winStreak(verdicts: WeekVerdict[]): number {
   const finished = verdicts.filter((w) => !w.inProgress);
   let streak = 0;
   for (let i = finished.length - 1; i >= 0; i--) {
+    if (isOffWeek(finished[i])) continue;
     if (finished[i].isWin === true) streak++;
     else break;
   }
   return streak;
+}
+
+/**
+ * Log coverage over a window: how many trackable finished days were actually
+ * logged since `fromKey`. Today never counts (it isn't over), not-tracked
+ * days count on neither side, and days outside the window count nowhere —
+ * this is the honest denominator for "is patchy logging the reason the scale
+ * and the food log disagree?".
+ */
+export function coverageSince(
+  loggedDates: ReadonlySet<string>,
+  untracked: ReadonlySet<string>,
+  fromKey: string,
+  today: string,
+): { logged: number; expected: number; ratio: number } {
+  let logged = 0;
+  let expected = 0;
+  for (let d = fromKey; d < today; d = addDays(d, 1)) {
+    if (untracked.has(d)) continue;
+    expected++;
+    if (loggedDates.has(d)) logged++;
+  }
+  return { logged, expected, ratio: expected === 0 ? 1 : logged / expected };
 }
 
 /** Every deficit banked so far, including the week in progress. */
@@ -285,7 +315,7 @@ export function winsRows<T extends WeekVerdict>(
       kind: "gap",
       weeks: gap.length,
       from: gap[gap.length - 1].weekOf,
-      to: gap[0].weekOf,
+      to: gap[0].weekEnd,
     });
     gap = [];
   };

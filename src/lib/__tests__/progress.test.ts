@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  calendarWeeks, cumulativeDeficit, dailyRate, dailyTotals, judgeWeek,
-  latestLoggedWeek, verdictFor, winsRows, winStreak,
+  calendarWeeks, coverageSince, cumulativeDeficit, dailyRate, dailyTotals,
+  judgeWeek, latestLoggedWeek, verdictFor, winsRows, winStreak,
   type DiaryEntry, type WeekVerdict,
 } from "../progress";
 
@@ -359,5 +359,72 @@ describe("winsRows", () => {
     const { rows, olderCount } = winsRows(verdicts(entries), { maxWeeks: 12 });
     expect(rows.filter((r) => r.kind === "week").length).toBe(12);
     expect(olderCount).toBe(4);
+  });
+});
+
+describe("review fixes", () => {
+  const opts = { bankKcal: BANK, toleranceKcal: TOL, maintenanceKcal: null, direction: "lose" as const };
+  const offWeek = new Set(
+    Array.from({ length: 7 }, (_, i) => {
+      const d = new Date("2026-07-26T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + i);
+      return d.toISOString().slice(0, 10);
+    }),
+  );
+
+  it("an off-week is skipped by the streak, not broken by it", () => {
+    // Win week, whole week off, win week: streak must read 2.
+    const entries = [...logDays("2026-07-19", 7, 1900), ...logDays("2026-08-02", 7, 1900)];
+    const verdicts = calendarWeeks(entries, "2026-08-13", offWeek).map((w) =>
+      verdictFor(w, opts),
+    );
+    expect(winStreak(verdicts)).toBe(2);
+  });
+
+  it("a merely-empty week still breaks the streak", () => {
+    const entries = [...logDays("2026-07-19", 7, 1900), ...logDays("2026-08-02", 7, 1900)];
+    const verdicts = calendarWeeks(entries, "2026-08-13").map((w) => verdictFor(w, opts));
+    expect(winStreak(verdicts)).toBe(1);
+  });
+
+  it("gap rows span through the newest empty week's END", () => {
+    const entries = [...logDays("2026-07-05", 7, 1900), ...logDays("2026-08-02", 3, 1900)];
+    const { rows } = winsRows(
+      calendarWeeks(entries, TODAY).map((w) => verdictFor(w, opts)),
+    );
+    const gap = rows.find((r) => r.kind === "gap")!;
+    expect(gap).toMatchObject({ from: "2026-07-12", to: "2026-08-01" }); // Sat, not Sun
+  });
+});
+
+describe("coverageSince", () => {
+  const logged = (from: string, n: number) => {
+    const out = new Set<string>();
+    const d = new Date(from + "T00:00:00Z");
+    for (let i = 0; i < n; i++) {
+      out.add(d.toISOString().slice(0, 10));
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return out;
+  };
+  const none = new Set<string>();
+
+  it("excludes today from the denominator", () => {
+    // Baseline Aug 6, today Aug 16: 10 finished days, 8 logged = exactly 80%.
+    const c = coverageSince(logged("2026-08-06", 8), none, "2026-08-06", "2026-08-16");
+    expect(c).toEqual({ logged: 8, expected: 10, ratio: 0.8 });
+  });
+
+  it("not-tracked days count on neither side", () => {
+    const off = logged("2026-08-02", 7); // Aug 2–8 marked off
+    const c = coverageSince(logged("2026-08-09", 7), off, "2026-08-01", "2026-08-16");
+    expect(c.expected).toBe(8); // Aug 1 + Aug 9–15
+    expect(c.logged).toBe(7);
+  });
+
+  it("logs from before the window count for nothing", () => {
+    // 61 days logged in June–July, first weigh-in Aug 1, nothing since.
+    const c = coverageSince(logged("2026-06-01", 61), none, "2026-08-01", "2026-08-16");
+    expect(c).toEqual({ logged: 0, expected: 15, ratio: 0 });
   });
 });

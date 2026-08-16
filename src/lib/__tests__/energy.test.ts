@@ -211,7 +211,7 @@ describe("impliedWindowProgress", () => {
 
   it("measures the best run anchored at a weigh-in", () => {
     const p = impliedWindowProgress(["2026-08-01"], logged("2026-08-01", 7), none);
-    expect(p).toEqual({ bestRunDays: 7, requiredDays: 15 });
+    expect(p).toEqual({ bestRunDays: 7, requiredDays: 15, bestRunEnd: "2026-08-07" });
   });
 
   it("an untracked day cuts the run", () => {

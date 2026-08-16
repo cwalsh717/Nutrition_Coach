@@ -338,7 +338,7 @@ export function buildWeekStateSection(
 
 /** The user's longer arc for the coach: deficits banked, streak, the scale. */
 export async function buildProgressSection(userId: string): Promise<string> {
-  const [profile, energy, logRows] = await Promise.all([
+  const [profile, energy, logRows, untrackedRows] = await Promise.all([
     db.profile.findUnique({ where: { userId } }),
     getEnergyStatus(userId),
     db.foodLogEntry.findMany({
@@ -346,8 +346,10 @@ export async function buildProgressSection(userId: string): Promise<string> {
       orderBy: { date: "asc" },
       select: { date: true, kcal: true, proteinG: true },
     }),
+    db.untrackedDay.findMany({ where: { userId }, select: { date: true } }),
   ]);
   if (logRows.length === 0) return "Progress: nothing logged yet.";
+  const untrackedSet = new Set(untrackedRows.map((u) => u.date.toISOString().slice(0, 10)));
 
   const { calendarWeeks, cumulativeDeficit, verdictFor, winStreak } = await import("./progress");
   const { resolveGoal } = await import("./goal");
@@ -364,6 +366,7 @@ export async function buildProgressSection(userId: string): Promise<string> {
       proteinG: e.proteinG,
     })),
     await todayIso(),
+    untrackedSet,
   ).map((w) =>
     verdictFor(w, {
       bankKcal: profile?.weeklyKcalBudget ?? null,

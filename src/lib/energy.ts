@@ -8,6 +8,7 @@
 // maintenance estimate is the thing that's wrong.
 
 import { ACTIVITY_MULTIPLIER, bmr, type Activity, type Vitals } from "./targets";
+import { addDays } from "./weeks";
 
 export const KCAL_PER_LB = 3500;
 
@@ -92,6 +93,9 @@ export interface ImpliedWindowProgress {
   /** Longest run of consecutive fully-logged days starting at a weigh-in. */
   bestRunDays: number;
   requiredDays: number;
+  /** Last logged day of the best run — lets the UI say whether the run is
+   *  still alive and a closing weigh-in would finish the job. */
+  bestRunEnd: string | null;
 }
 
 /**
@@ -106,22 +110,20 @@ export function impliedWindowProgress(
   requiredDays = 15,
 ): ImpliedWindowProgress {
   let best = 0;
+  let bestEnd: string | null = null;
   for (const anchor of weighInDates) {
     let run = 0;
     let d = anchor;
     while (loggedDates.has(d) && !untrackedDates.has(d) && run < requiredDays) {
       run++;
-      d = nextDay(d);
+      d = addDays(d, 1);
     }
-    if (run > best) best = run;
+    if (run > best) {
+      best = run;
+      bestEnd = addDays(d, -1);
+    }
   }
-  return { bestRunDays: Math.min(best, requiredDays), requiredDays };
-}
-
-function nextDay(key: string): string {
-  const d = new Date(key + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
+  return { bestRunDays: Math.min(best, requiredDays), requiredDays, bestRunEnd: bestEnd };
 }
 
 export interface ImpliedWindow {

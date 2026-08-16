@@ -3,8 +3,8 @@ import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { getEnergyStatus, todayIso } from "@/lib/queries";
 import {
-  calendarWeeks, cumulativeDeficit, dailyRate, dailyTotals, latestLoggedWeek,
-  verdictFor, winsRows, winStreak, type DiaryEntry,
+  calendarWeeks, coverageSince, cumulativeDeficit, dailyRate, dailyTotals,
+  latestLoggedWeek, verdictFor, winsRows, winStreak, type DiaryEntry,
 } from "@/lib/progress";
 import {
   formulaMaintenance, goalProgress, impliedWindowProgress, KCAL_PER_LB,
@@ -129,12 +129,13 @@ export default async function ProgressPage({
   const trend = energy.weighInSpanDays >= 14 ? energy.trendLbPerWeek : null;
 
   // When the calorie line and the scale line disagree, name the likeliest
-  // culprit honestly: patchy logging beats a bad maintenance estimate.
-  const daysSinceBaseline =
+  // culprit honestly: patchy logging beats a bad maintenance estimate. The
+  // window is first-weigh-in → yesterday, minus not-tracked days, and only
+  // logs INSIDE that window count.
+  const coverage =
     weighIns.length > 0
-      ? Math.round((Date.parse(today) - Date.parse(weighIns[0].date)) / 86_400_000) + 1
-      : 0;
-  const coverageSinceBaseline = daysSinceBaseline > 0 ? totalLogged / daysSinceBaseline : 1;
+      ? coverageSince(loggedDates, untracked, weighIns[0].date, today)
+      : { logged: 0, expected: 0, ratio: 1 };
 
   const impliedMeter = impliedWindowProgress(
     weighIns.map((w) => w.date),
@@ -183,9 +184,9 @@ export default async function ProgressPage({
             <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
               Your profile says <em>{profile?.goalType}</em>, but your goal weight
               ({goal.goalLb} lb) is {goal.direction === "gain" ? "above" : "below"} your
-              current weight — so everything here reads as {goal.direction}ing.
-              If that&apos;s stale, update{" "}
-              <Link href="/profile" className="underline">Profile</Link>.
+              starting weight ({goal.baselineLb} lb) — so everything here reads as{" "}
+              {goal.direction === "gain" ? "gaining" : "losing"}. If that&apos;s stale,
+              update <Link href="/profile" className="underline">Profile</Link>.
             </p>
           )}
 
@@ -292,9 +293,14 @@ export default async function ProgressPage({
                     {race.gapKcal !== null && Math.abs(race.gapKcal) >= 3 * KCAL_PER_LB && (
                       <p className="text-muted-foreground">
                         The two lines differ by ~{Math.round(Math.abs(race.gapKcal) / KCAL_PER_LB)} lb.{" "}
-                        {coverageSinceBaseline < 0.8
-                          ? `The likeliest reason: only ${totalLogged} of ${daysSinceBaseline} days since your first weigh-in are logged — unlogged days hide calories the scale still counts.`
-                          : `With your logging this complete, the maintenance estimate is likely ${race.gapKcal > 0 ? "too low" : "too high"}.`}
+                        {coverage.ratio < 0.8
+                          ? `The likeliest reason: only ${coverage.logged} of ${coverage.expected} trackable days since your first weigh-in are logged — unlogged days hide calories the scale still counts.`
+                          : `With your logging this complete, the maintenance estimate is likely ${
+                              // gapKcal > 0 = the scale moved further toward the goal than
+                              // the food log predicted. For a loser that means the burn was
+                              // UNDERestimated; for a gainer, OVERestimated.
+                              (race.gapKcal > 0) === (race.direction === "lose") ? "too low" : "too high"
+                            }.`}
                         {energy.maintenance.source === "implied" &&
                           ` The app is already correcting from your data: ${energy.maintenance.value!.toLocaleString()}/day is in force.`}
                       </p>
@@ -397,7 +403,11 @@ export default async function ProgressPage({
                 <span className="ml-auto text-sm font-normal text-muted-foreground">
                   {goal.goalLb} lb goal
                   {energy.latestWeightLb !== null &&
-                    ` · ${Math.abs(Math.round((energy.latestWeightLb - goal.goalLb) * 10) / 10)} lb to go`}
+                    (goal.reached
+                      ? Math.abs(energy.latestWeightLb - goal.goalLb) > 0.5
+                        ? ` · passed by ${Math.abs(Math.round((energy.latestWeightLb - goal.goalLb) * 10) / 10)} lb`
+                        : " · reached"
+                      : ` · ${Math.abs(Math.round((energy.latestWeightLb - goal.goalLb) * 10) / 10)} lb to go`)}
                 </span>
               )}
             </CardTitle>
@@ -519,15 +529,22 @@ export default async function ProgressPage({
               )}
               {energy.maintenance.source === "formula" && (
                 <p className="text-muted-foreground">
-                  {impliedMeter.bestRunDays > 0 ? (
+                  {impliedMeter.bestRunDays >= impliedMeter.requiredDays ? (
+                    <>
+                      You have {impliedMeter.requiredDays} straight fully-logged days from
+                      a weigh-in — <strong className="text-foreground">one weigh-in on a
+                      logged day closes the window</strong> and switches this to the number
+                      your own data implies.
+                    </>
+                  ) : impliedMeter.bestRunDays > 0 ? (
                     <>
                       Your own data takes over after {impliedMeter.requiredDays} straight
                       fully-logged days between two weigh-ins — longest run so far:{" "}
                       <strong className="text-foreground">
                         {impliedMeter.bestRunDays} of {impliedMeter.requiredDays}
                       </strong>
-                      . A missed day restarts the run; a not-tracked day pauses the streak
-                      without lying about it.
+                      . A missed or not-tracked day ends a run; each weigh-in starts a
+                      fresh one.
                     </>
                   ) : (
                     <>
