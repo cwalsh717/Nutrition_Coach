@@ -3,7 +3,7 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
-  buildCookbookSection, buildProgressSection, buildWeekStateSection,
+  buildCookbookSection, buildProgressSection, buildWeekStateSection, todayIso,
   getFoodLogForWeek, resolveWeek,
 } from "@/lib/queries";
 import { buildProfileSection, coachReply } from "@/lib/claude/coach";
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
   try {
     const reply = await coachReply(
       buildProfileSection(profile ?? { goalType: null, sex: null, age: null, heightIn: null, weightLb: null, goalWeightLb: null, weeklyKcalBudget: null, proteinLowGDay: null, proteinHighGDay: null, aboutMe: "" }),
-      buildWeekStateSection(week, diary) + "\n\n" + progress + "\n\n" + cookbook,
+      buildWeekStateSection(week, diary, await todayIso()) + "\n\n" + progress + "\n\n" + cookbook,
       history
         .reverse()
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),

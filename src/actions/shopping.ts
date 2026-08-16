@@ -4,15 +4,25 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { candidateRows, getWeekFull } from "@/lib/queries";
+import { candidateRows, getWeekFull, todayIso } from "@/lib/queries";
 import { mergeRows, reviewSort } from "@/lib/shopping";
-import { isListLocked, type WeekStatus } from "@/lib/weeks";
+import { freezeReason, isListLocked, type WeekStatus } from "@/lib/weeks";
 
 /** Load a week for list work, refusing once the list is a finished artifact. */
 async function editableWeek(weekId: string) {
   const user = await requireUser();
   const week = await getWeekFull(user.id, weekId);
   if (!week) throw new Error("Week not found.");
+  // Two locks, both real: the list finishes when shopping does, and the whole
+  // week finishes when it's closed or its last day has passed.
+  const frozen = freezeReason(week, await todayIso());
+  if (frozen) {
+    throw new Error(
+      frozen === "done"
+        ? "This week is closed — reopen it with Revert to change the list."
+        : "This week has passed — its list is history now.",
+    );
+  }
   if (isListLocked(week.status as WeekStatus)) {
     throw new Error("This week's list is already done — reopen the week to change it.");
   }
@@ -60,6 +70,7 @@ export async function setItemStatus(itemId: string, status: "have" | "need") {
   });
   if (!item || item.week.userId !== user.id) return;
   if (isListLocked(item.week.status as WeekStatus)) return;
+  if (freezeReason(item.week, await todayIso())) return;
   await db.shoppingListItem.update({ where: { id: itemId }, data: { status } });
   revalidatePath("/week/list");
 }

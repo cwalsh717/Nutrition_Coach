@@ -19,6 +19,7 @@
 
 import { addDays, calendarWeekStart } from "./weeks";
 import { KCAL_PER_LB } from "./energy";
+import type { Direction } from "./goal";
 
 export interface DiaryEntry {
   date: string; // YYYY-MM-DD
@@ -35,12 +36,19 @@ export interface CalendarWeek {
   days: string[];
   entries: DiaryEntry[];
   consumedKcal: number;
+  /** Protein summed over PROTEIN-COMPLETE days only (see proteinDays). */
   proteinTotalG: number;
+  /** Days where every entry carries protein data. A day with even one
+   *  protein-less entry is protein-UNKNOWN — averaging it in would lie low. */
+  proteinDays: number;
   loggedDays: number;
   /** Days marked not-tracked that have already happened. */
   untrackedDays: number;
   /** Days of this week that have actually happened (7 unless it's this week). */
   elapsedDays: number;
+  /** Elapsed days BEFORE today with no entries and no not-tracked mark.
+   *  Today never counts — you haven't finished eating it. */
+  missedDays: number;
   inProgress: boolean;
   /** Every elapsed day is logged or not-tracked — nothing unknown. */
   accounted: boolean;
@@ -76,16 +84,29 @@ export function calendarWeeks(
     const loggedSet = new Set(mine.map((e) => e.date));
     const untrackedElapsed = elapsed.filter((d) => untracked.has(d)).length;
 
+    // Protein honesty: a day only joins the protein average when every one
+    // of its entries carries a protein number.
+    const proteinCompleteDays = [...loggedSet].filter((d) =>
+      mine.filter((e) => e.date === d).every((e) => e.proteinG !== null),
+    );
+    const proteinTotalG = mine
+      .filter((e) => proteinCompleteDays.includes(e.date))
+      .reduce((sum, e) => sum + (e.proteinG ?? 0), 0);
+
     out.push({
       weekOf,
       weekEnd,
       days,
       entries: mine,
       consumedKcal: mine.reduce((sum, e) => sum + e.kcal, 0),
-      proteinTotalG: mine.reduce((sum, e) => sum + (e.proteinG ?? 0), 0),
+      proteinTotalG,
+      proteinDays: proteinCompleteDays.length,
       loggedDays: loggedSet.size,
       untrackedDays: untrackedElapsed,
       elapsedDays: elapsed.length,
+      missedDays: elapsed.filter(
+        (d) => d < today && !loggedSet.has(d) && !untracked.has(d),
+      ).length,
       inProgress,
       accounted:
         elapsed.length > 0 &&
@@ -125,9 +146,16 @@ export interface WeekVerdict extends CalendarWeek {
  */
 export function verdictFor(
   week: CalendarWeek,
-  opts: { bankKcal: number | null; toleranceKcal: number; maintenanceKcal: number | null },
+  opts: {
+    bankKcal: number | null;
+    toleranceKcal: number;
+    maintenanceKcal: number | null;
+    /** Flips the win rule: the bank is a ceiling to a loser, a floor to a
+     *  gainer, and a bullseye to a maintainer. */
+    direction: Direction;
+  },
 ): WeekVerdict {
-  const { bankKcal, toleranceKcal, maintenanceKcal } = opts;
+  const { bankKcal, toleranceKcal, maintenanceKcal, direction } = opts;
 
   // Only logged days earn bank to eat against. No logging → no comparison at
   // all: an empty week must never render as a full week of deficit.
@@ -148,11 +176,17 @@ export function verdictFor(
       bankSoFarKcal === null
         ? null
         : judgeWeek(week.consumedKcal, bankSoFarKcal, toleranceKcal),
-    isWin: judgeable ? week.consumedKcal <= bankSoFarKcal! + toleranceKcal : null,
+    isWin: judgeable
+      ? direction === "lose"
+        ? week.consumedKcal <= bankSoFarKcal! + toleranceKcal
+        : direction === "gain"
+          ? week.consumedKcal >= bankSoFarKcal! - toleranceKcal
+          : Math.abs(bankSoFarKcal! - week.consumedKcal) <= toleranceKcal
+      : null,
     avgKcalPerLoggedDay:
       week.loggedDays === 0 ? null : Math.round(week.consumedKcal / week.loggedDays),
     proteinPerLoggedDay:
-      week.loggedDays === 0 ? null : Math.round(week.proteinTotalG / week.loggedDays),
+      week.proteinDays === 0 ? null : Math.round(week.proteinTotalG / week.proteinDays),
     maintenanceKcal,
     deficitKcal:
       maintenanceKcal === null || week.loggedDays === 0
@@ -165,20 +199,50 @@ export function verdictFor(
   };
 }
 
+/** A finished week that was entirely marked not-tracked. */
+function isOffWeek(w: WeekVerdict): boolean {
+  return w.loggedDays === 0 && w.elapsedDays > 0 && w.untrackedDays >= w.elapsedDays;
+}
+
 /**
  * Wins in a row, counting back from the most recent FINISHED week. The week
  * you're in never counts — it isn't over — but it doesn't break the run
- * either. An unjudgeable week (unknown days, no bank) does break it: we
- * can't honestly call it a win.
+ * either. A week deliberately marked off is SKIPPED: "counts nowhere,
+ * breaks nothing" has to include the streak. An unjudgeable week (unknown
+ * days, no bank) does break it: we can't honestly call it a win.
  */
 export function winStreak(verdicts: WeekVerdict[]): number {
   const finished = verdicts.filter((w) => !w.inProgress);
   let streak = 0;
   for (let i = finished.length - 1; i >= 0; i--) {
+    if (isOffWeek(finished[i])) continue;
     if (finished[i].isWin === true) streak++;
     else break;
   }
   return streak;
+}
+
+/**
+ * Log coverage over a window: how many trackable finished days were actually
+ * logged since `fromKey`. Today never counts (it isn't over), not-tracked
+ * days count on neither side, and days outside the window count nowhere —
+ * this is the honest denominator for "is patchy logging the reason the scale
+ * and the food log disagree?".
+ */
+export function coverageSince(
+  loggedDates: ReadonlySet<string>,
+  untracked: ReadonlySet<string>,
+  fromKey: string,
+  today: string,
+): { logged: number; expected: number; ratio: number } {
+  let logged = 0;
+  let expected = 0;
+  for (let d = fromKey; d < today; d = addDays(d, 1)) {
+    if (untracked.has(d)) continue;
+    expected++;
+    if (loggedDates.has(d)) logged++;
+  }
+  return { logged, expected, ratio: expected === 0 ? 1 : logged / expected };
 }
 
 /** Every deficit banked so far, including the week in progress. */
@@ -186,17 +250,105 @@ export function cumulativeDeficit(verdicts: WeekVerdict[]): number {
   return verdicts.reduce((sum, w) => sum + (w.deficitKcal ?? 0), 0);
 }
 
-/** Per-day kcal/protein totals for one week, including days with no entries. */
-export function dailyTotals(days: string[], entries: DiaryEntry[]) {
+export type DayState = "logged" | "empty" | "untracked" | "future";
+
+/** Per-day totals for one week, each day carrying which of the four states
+ *  it's in — a missed day, a day off, and next Saturday are different facts. */
+export function dailyTotals(
+  days: string[],
+  entries: DiaryEntry[],
+  ctx: { today: string; untracked: ReadonlySet<string> },
+) {
   return days.map((date) => {
     const forDay = entries.filter((e) => e.date === date);
+    const state: DayState =
+      ctx.untracked.has(date)
+        ? "untracked"
+        : forDay.length > 0
+          ? "logged"
+          : date > ctx.today
+            ? "future"
+            : "empty";
     return {
       date,
       kcal: forDay.reduce((sum, e) => sum + e.kcal, 0),
       proteinG: forDay.reduce((sum, e) => sum + (e.proteinG ?? 0), 0),
-      logged: forDay.length > 0,
+      state,
     };
   });
+}
+
+/** The most recent week with at least one logged day — what the day-by-day
+ *  chart should show instead of an empty Sunday morning. */
+export function latestLoggedWeek<T extends CalendarWeek>(weeks: T[]): T | null {
+  for (let i = weeks.length - 1; i >= 0; i--) {
+    if (weeks[i].loggedDays > 0) return weeks[i];
+  }
+  return null;
+}
+
+/** One display row of the Weekly Wins list. */
+export type WinsRow<T> =
+  | { kind: "week"; week: T }
+  | { kind: "new-week"; weekOf: string }
+  | { kind: "gap"; weeks: number; from: string; to: string }
+  | { kind: "off-week"; week: T };
+
+/**
+ * Weekly Wins rows, newest first: real weeks scored, the empty current week
+ * as a quiet marker, stretches of empty finished weeks collapsed into one
+ * line, and fully-untracked weeks labeled as time off. Capped, with the
+ * overflow counted so the page can offer "show all".
+ */
+export function winsRows<T extends WeekVerdict>(
+  verdicts: T[],
+  opts: { maxWeeks?: number } = {},
+): { rows: WinsRow<T>[]; olderCount: number } {
+  const maxWeeks = opts.maxWeeks ?? 12;
+  const newestFirst = [...verdicts].reverse();
+
+  const rows: WinsRow<T>[] = [];
+  let gap: T[] = [];
+  const flushGap = () => {
+    if (gap.length === 0) return;
+    rows.push({
+      kind: "gap",
+      weeks: gap.length,
+      from: gap[gap.length - 1].weekOf,
+      to: gap[0].weekEnd,
+    });
+    gap = [];
+  };
+
+  for (const week of newestFirst) {
+    if (week.inProgress && week.loggedDays === 0) {
+      rows.push({ kind: "new-week", weekOf: week.weekOf });
+    } else if (week.loggedDays > 0) {
+      flushGap();
+      rows.push({ kind: "week", week });
+    } else if (week.untrackedDays >= week.elapsedDays && week.elapsedDays > 0) {
+      flushGap();
+      rows.push({ kind: "off-week", week });
+    } else {
+      gap.push(week);
+    }
+  }
+  flushGap();
+
+  const weekRows = rows.filter((r) => r.kind === "week").length;
+  if (weekRows <= maxWeeks) return { rows, olderCount: 0 };
+
+  // Trim from the old end until only maxWeeks scored weeks remain.
+  let kept = 0;
+  const trimmed: WinsRow<T>[] = [];
+  for (const row of rows) {
+    if (row.kind === "week") {
+      if (kept === maxWeeks) break;
+      kept++;
+    }
+    trimmed.push(row);
+  }
+  return { rows: trimmed, olderCount: weekRows - maxWeeks };
 }
 
 /** The per-day allowance a week's bank implies. */

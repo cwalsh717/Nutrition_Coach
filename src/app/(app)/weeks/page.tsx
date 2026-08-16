@@ -6,7 +6,7 @@ import { InfoTip } from "@/components/info-tip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { classify, rangeLabel, relativeLabel, weekEnd, type WeekStatus } from "@/lib/weeks";
+import { classify, rangeLabel, relativeLabel, weekEnd, type WeekStatus, displayStatus } from "@/lib/weeks";
 import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -79,7 +79,9 @@ export default async function WeeksPage() {
                         {logged > 0 && ` · ${logged} logged`}
                       </div>
                     </div>
-                    <Badge variant={status === "done" ? "outline" : "default"}>{status}</Badge>
+                    <Badge variant={when === "past" ? "outline" : "default"}>
+                      {displayStatus(week, today)}
+                    </Badge>
                   </CardContent>
                 </Card>
               </Link>

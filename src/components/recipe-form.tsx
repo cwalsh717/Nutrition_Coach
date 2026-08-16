@@ -46,7 +46,9 @@ interface Props {
   rawText?: string;
   action: (formData: FormData) => Promise<void>;
   submitLabel: string;
-  showAddToWeek?: boolean;
+  /** The editable week an ingest save may also target — id + display label.
+   *  Null/absent = no checkbox (no editable week, or cookbook edit context). */
+  targetWeek?: { id: string; label: string } | null;
 }
 
 interface Row {
@@ -57,7 +59,7 @@ interface Row {
   stapleHint: boolean;
 }
 
-export function RecipeForm({ initial, rawText, action, submitLabel, showAddToWeek }: Props) {
+export function RecipeForm({ initial, rawText, action, submitLabel, targetWeek }: Props) {
   const [rows, setRows] = useState<Row[]>(
     initial.ingredients.length > 0
       ? initial.ingredients.map((ing) => ({ ...ing, qty: ing.qty === null ? "" : String(ing.qty) }))
@@ -178,10 +180,11 @@ export function RecipeForm({ initial, rawText, action, submitLabel, showAddToWee
 
       <div className="flex items-center gap-4">
         <Button type="submit" disabled={pending}>{pending ? "Saving…" : submitLabel}</Button>
-        {showAddToWeek && (
+        {targetWeek && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" name="addToWeek" value="true" />
-            also add to this week
+            <input type="hidden" name="targetWeekId" value={targetWeek.id} />
+            also add to {targetWeek.label}
           </label>
         )}
       </div>

@@ -33,7 +33,7 @@ function toFormValues(parsed: ParsedRecipe, sourceHint: string): RecipeFormValue
   };
 }
 
-export function IngestFlow() {
+export function IngestFlow({ targetWeek }: { targetWeek: { id: string; label: string } | null }) {
   const [rawText, setRawText] = useState("");
   const [error, setError] = useState("");
   const [parsed, setParsed] = useState<RecipeFormValues | null>(null);
@@ -70,7 +70,7 @@ export function IngestFlow() {
           rawText={rawText}
           action={createRecipe}
           submitLabel="Save to Cook Book"
-          showAddToWeek
+          targetWeek={targetWeek}
         />
       </div>
     );

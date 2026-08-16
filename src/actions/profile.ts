@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { keyToDbDate, localDateKey } from "@/lib/dates";
 import { requireUser } from "@/lib/session";
+import { todayIso } from "@/lib/queries";
+import { isWeekEditable } from "@/lib/weeks";
 import { z } from "zod";
 
 // Every field optional — empty string means "clear it". The user owns every number.
@@ -32,7 +34,7 @@ function emptyToNull(value: FormDataEntryValue | null): string | null {
 
 export async function saveProfile(formData: FormData) {
   const user = await requireUser();
-  const parsed = profileSchema.parse({
+  const result = profileSchema.safeParse({
     goalType: emptyToNull(formData.get("goalType")),
     sex: emptyToNull(formData.get("sex")),
     age: emptyToNull(formData.get("age")),
@@ -47,6 +49,10 @@ export async function saveProfile(formData: FormData) {
     proteinHighGDay: emptyToNull(formData.get("proteinHighGDay")),
     aboutMe: (formData.get("aboutMe") ?? "").toString(),
   });
+  if (!result.success) {
+    throw new Error("One of the profile numbers isn't valid — check the fields and try again.");
+  }
+  const parsed = result.data;
 
   await db.profile.update({ where: { userId: user.id }, data: parsed });
 
@@ -65,10 +71,14 @@ async function syncOpenWeekTargets(
   userId: string,
   targets: { weeklyKcalBudget: number | null; proteinLowGDay: number | null; proteinHighGDay: number | null },
 ) {
-  const openWeeks = await db.week.findMany({
-    where: { userId, status: { not: "done" } },
-    select: { id: true, dayCount: true },
+  // Every week, filtered by the ONE freeze predicate — a lapsed week's bank is
+  // what it was judged against, and changing today's target must not rewrite it.
+  const candidates = await db.week.findMany({
+    where: { userId },
+    select: { id: true, weekOf: true, dayCount: true, status: true },
   });
+  const today = await todayIso();
+  const openWeeks = candidates.filter((w) => isWeekEditable(w, today));
   // Row by row because partial weeks prorate the bank by their day count.
   for (const week of openWeeks) {
     await db.week.update({
@@ -111,7 +121,7 @@ export async function completeOnboarding(formData: FormData) {
 }
 
 async function saveProfileFields(userId: string, formData: FormData) {
-  const parsed = profileSchema.parse({
+  const result = profileSchema.safeParse({
     goalType: emptyToNull(formData.get("goalType")),
     sex: emptyToNull(formData.get("sex")),
     age: emptyToNull(formData.get("age")),
@@ -126,7 +136,10 @@ async function saveProfileFields(userId: string, formData: FormData) {
     proteinHighGDay: emptyToNull(formData.get("proteinHighGDay")),
     aboutMe: (formData.get("aboutMe") ?? "").toString(),
   });
-  await db.profile.update({ where: { userId }, data: parsed });
+  if (!result.success) {
+    throw new Error("One of the profile numbers isn't valid — check the fields and try again.");
+  }
+  await db.profile.update({ where: { userId }, data: result.data });
 }
 
 /** Rename the account (shown in the app and used by onboarding greetings). */

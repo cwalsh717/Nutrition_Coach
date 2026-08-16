@@ -10,7 +10,7 @@ import { WeekStepper } from "@/components/week-stage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { rangeLabel, relativeLabel, type WeekStatus } from "@/lib/weeks";
+import { rangeLabel, relativeLabel, type WeekStatus, displayStatus } from "@/lib/weeks";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +26,10 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
   // The diary lives on the user, so read it by this week's dates.
   const foodLog = await getFoodLogForWeek(user.id, week.weekOf, week.dayCount);
 
+  const today = await todayIso();
   const weekOf = week.weekOf.toISOString().slice(0, 10);
   const status = week.status as WeekStatus;
+  const shown = displayStatus(week, today);
   const totals = weekTotals(
     week.recipes.map((wr) => ({
       name: wr.recipe.name,
@@ -54,12 +56,12 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
         <div>
           <h1 className="text-2xl">{rangeLabel(weekOf, week.dayCount)}</h1>
           <p className="text-sm text-muted-foreground">
-            {relativeLabel(weekOf, week.dayCount, await todayIso())}
+            {relativeLabel(weekOf, week.dayCount, today)}
             {week.dayCount < 7 && ` · ${week.dayCount}-day week`}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Badge variant={status === "done" ? "outline" : "default"}>{status}</Badge>
+          <Badge variant={shown === "done" || shown === "closed" ? "outline" : "default"}>{shown}</Badge>
           <Button asChild variant="outline" size="sm">
             <Link href={`/week?w=${week.id}`}>Open this week</Link>
           </Button>
