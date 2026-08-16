@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Prep Coach dev server, always on (macOS). Edit WorkingDirectory and the
+  node path for your machine, then install:
+    cp launchd/com.prepcoach.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.prepcoach.plist
+
+  Runs `npm run dev` (not a production build) on purpose: this machine is both
+  the server and the workbench, and dev mode hot-reloads code edits so the
+  running app always reflects the working tree. KeepAlive restarts it if it
+  crashes or gets killed. Needs Postgres running.
+
+  Stop temporarily:  launchctl kill SIGTERM gui/$UID/com.prepcoach
+  Remove for good:   launchctl bootout gui/$UID/com.prepcoach
+  Logs:              ~/Library/Logs/prepcoach.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.prepcoach</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"; exec npm run dev</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU/path/to/PrepCoach</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Don't hammer restarts if it's dying instantly (e.g. Postgres is off). -->
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/YOU/Library/Logs/prepcoach.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOU/Library/Logs/prepcoach.log</string>
+</dict>
+</plist>

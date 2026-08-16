@@ -1,0 +1,24 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getSessionCookie } from "better-auth/cookies";
+
+/**
+ * UX-only gate: bounce obviously-logged-out visitors to /login without a
+ * server render. This checks that a session cookie EXISTS, not that it's
+ * valid — the authoritative check is requireUser() inside every page and
+ * server action. Deleting this file would not create a security hole;
+ * deleting requireUser() calls would.
+ */
+export function middleware(request: NextRequest) {
+  const cookie = getSessionCookie(request);
+  if (!cookie) {
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+  return NextResponse.next();
+}
+
+export const config = {
+  // Everything except auth pages, auth API, and static assets.
+  matcher: [
+    "/((?!login|signup|api/auth|_next/static|_next/image|favicon.ico).*)",
+  ],
+};
