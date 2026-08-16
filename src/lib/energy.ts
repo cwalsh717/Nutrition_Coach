@@ -25,14 +25,23 @@ export function formulaMaintenance(vitals: Vitals, activity: Activity): number {
   return Math.round(bmr(vitals) * ACTIVITY_MULTIPLIER[activity]);
 }
 
+/** Calendar days between the first and last weigh-in. */
+export function weighInSpanDays(points: WeighIn[]): number {
+  if (points.length < 2) return 0;
+  const sorted = [...points].sort((a, b) => a.date.localeCompare(b.date));
+  return dayNumber(sorted[sorted.length - 1].date) - dayNumber(sorted[0].date);
+}
+
 /**
  * Trend from the scale, in lb per week. Least squares over every weigh-in
  * rather than first-vs-last, because water weight makes any single reading a
- * liar. Negative = losing. Null until there are two weigh-ins on two dates.
+ * liar. Negative = losing. Null until the readings span at least two weeks —
+ * a slope fitted to a few days extrapolates noise, not a trend.
  */
-export function weightTrendLbPerWeek(points: WeighIn[]): number | null {
+export function weightTrendLbPerWeek(points: WeighIn[], minSpanDays = 14): number | null {
   const dates = new Set(points.map((p) => p.date));
   if (points.length < 2 || dates.size < 2) return null;
+  if (weighInSpanDays(points) < minSpanDays) return null;
 
   // x = days since the first weigh-in, y = pounds.
   const origin = dayNumber(points[0].date);
@@ -54,9 +63,9 @@ export function weightTrendLbPerWeek(points: WeighIn[]): number | null {
 
 export interface ImpliedInput {
   consumedKcal: number;
-  loggedDays: number;
-  /** Calendar days the window spans, logged or not. */
-  windowDays: number;
+  /** Days of eating between the two weigh-ins. The CALLER guarantees every
+   *  one of them is fully logged (impliedWindow enforces it). */
+  days: number;
   /** Weight change across the window; negative = lost. */
   lbChange: number;
 }
@@ -64,24 +73,55 @@ export interface ImpliedInput {
 /**
  * What the data says maintenance actually is: your average intake plus the
  * daily deficit the scale proves you ran. This is the honest number — it
- * needs no formula and no guess about activity.
- *
- * Returns null unless the evidence is good enough: at least a fortnight, and
- * at least 80% of those days logged. Unlogged days are never estimated; the
- * average intake is assumed to hold across them, which is only fair when
- * they're rare.
+ * needs no formula and no guess about activity. Full log coverage is the
+ * caller's contract; this function only guards the arithmetic.
  */
 export function impliedMaintenance(input: ImpliedInput): number | null {
-  const { consumedKcal, loggedDays, windowDays, lbChange } = input;
-  if (windowDays < 14 || loggedDays === 0) return null;
-  if (loggedDays / windowDays < 0.8) return null;
+  const { consumedKcal, days, lbChange } = input;
+  if (days < 14) return null;
 
-  const avgIntake = consumedKcal / loggedDays;
-  const deficitPerDay = (-lbChange * KCAL_PER_LB) / windowDays;
+  const avgIntake = consumedKcal / days;
+  const deficitPerDay = (-lbChange * KCAL_PER_LB) / days;
   const implied = Math.round(avgIntake + deficitPerDay);
   // Outside human range the inputs are junk — a mistyped weight, a week of
   // entries missed — not a discovery about your metabolism.
   return implied < 1000 || implied > 6000 ? null : implied;
+}
+
+export interface ImpliedWindowProgress {
+  /** Longest run of consecutive fully-logged days starting at a weigh-in. */
+  bestRunDays: number;
+  requiredDays: number;
+}
+
+/**
+ * How close the user is to unlocking the data-implied number — fuel for a
+ * "7 of 15 days" meter instead of a vague promise. Only runs anchored at a
+ * weigh-in can ever qualify, so that's what we measure.
+ */
+export function impliedWindowProgress(
+  weighInDates: readonly string[],
+  loggedDates: ReadonlySet<string>,
+  untrackedDates: ReadonlySet<string>,
+  requiredDays = 15,
+): ImpliedWindowProgress {
+  let best = 0;
+  for (const anchor of weighInDates) {
+    let run = 0;
+    let d = anchor;
+    while (loggedDates.has(d) && !untrackedDates.has(d) && run < requiredDays) {
+      run++;
+      d = nextDay(d);
+    }
+    if (run > best) best = run;
+  }
+  return { bestRunDays: Math.min(best, requiredDays), requiredDays };
+}
+
+function nextDay(key: string): string {
+  const d = new Date(key + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 export interface ImpliedWindow {
@@ -156,49 +196,101 @@ export function effectiveMaintenance(input: {
   return { value: null, source: null };
 }
 
-export interface BurnDown {
-  /** (start − goal) × 3,500. The whole job, in calories. */
+export interface GoalProgress {
+  direction: "lose" | "gain";
+  /** |baseline − goal| × 3,500: the whole job in calories. */
   totalKcal: number;
-  /** Deficit banked so far, by the food log. Negative if you're over. */
-  burnedByCaloriesKcal: number;
-  /** Deficit the scale says you banked. Null with fewer than two weigh-ins. */
-  burnedByScaleKcal: number | null;
-  /** Still to burn, by the food log. Never below zero. */
+  /** Energy banked TOWARD the goal (deficit for lose, surplus for gain).
+   *  Negative = the food log says you moved away from it. */
+  bankedByCaloriesKcal: number;
+  /** Same thing as the scale tells it. Null with fewer than two weigh-ins. */
+  bankedByScaleKcal: number | null;
+  /** Still to bank, by the food log. Never below zero. */
   remainingKcal: number;
+  /** Signed pounds, positive = progress — in EITHER direction. */
   lbByCalories: number;
   lbByScale: number | null;
-  /** Scale minus calories. Positive = losing faster than the math predicts. */
+  /** Scale minus calories, in progress units. The calibration signal. */
   gapKcal: number | null;
-  /** 0–100, by the food log. */
-  pctComplete: number;
+  /** 0–100 by the food log. Safe at zero total. */
+  pctByCalories: number;
+  reachedByScale: boolean;
+  /** Pounds past the goal, when the scale says you overshot it. */
+  overshootLb: number | null;
 }
 
 /**
- * The countdown. Two independent estimates of the same thing — what you ate,
- * and what you weigh — so a disagreement between them is visible instead of
- * silently averaged away. That gap is the maintenance estimate being wrong.
+ * The countdown, pointed whichever way the goal points. Two independent
+ * estimates of the same journey — what you ate and what you weigh — so a
+ * disagreement is visible instead of silently averaged away.
+ *
+ * Sign convention: positive always means "toward the goal". A gainer's
+ * surplus and a loser's deficit both land on the plus side.
  */
-export function burnDown(input: {
+export function goalProgress(input: {
+  direction: "lose" | "gain";
   baselineLb: number;
   goalLb: number;
+  /** Cumulative deficit from the diary; + = ate under maintenance. */
   cumulativeDeficitKcal: number;
   latestLb: number | null;
-}): BurnDown {
-  const { baselineLb, goalLb, cumulativeDeficitKcal, latestLb } = input;
-  const totalKcal = Math.round((baselineLb - goalLb) * KCAL_PER_LB);
-  const burnedByScaleKcal =
-    latestLb === null ? null : Math.round((baselineLb - latestLb) * KCAL_PER_LB);
+}): GoalProgress {
+  const { direction, baselineLb, goalLb, cumulativeDeficitKcal, latestLb } = input;
+  const sign = direction === "lose" ? 1 : -1;
+
+  const totalKcal = Math.round(Math.abs(baselineLb - goalLb) * KCAL_PER_LB);
+  const bankedByCaloriesKcal = Math.round(sign * cumulativeDeficitKcal);
+  const scaleLbProgress = latestLb === null ? null : sign * (baselineLb - latestLb);
+  const bankedByScaleKcal =
+    scaleLbProgress === null ? null : Math.round(scaleLbProgress * KCAL_PER_LB);
+
+  const reachedByScale =
+    latestLb !== null &&
+    (direction === "lose" ? latestLb <= goalLb + 0.5 : latestLb >= goalLb - 0.5);
+  const overshoot =
+    latestLb === null ? null : round1(direction === "lose" ? goalLb - latestLb : latestLb - goalLb);
 
   return {
+    direction,
     totalKcal,
-    burnedByCaloriesKcal: Math.round(cumulativeDeficitKcal),
-    burnedByScaleKcal,
-    remainingKcal: Math.max(totalKcal - Math.round(cumulativeDeficitKcal), 0),
-    lbByCalories: round1(cumulativeDeficitKcal / KCAL_PER_LB),
-    lbByScale: latestLb === null ? null : round1(baselineLb - latestLb),
-    gapKcal: burnedByScaleKcal === null ? null : burnedByScaleKcal - Math.round(cumulativeDeficitKcal),
-    pctComplete:
-      totalKcal <= 0 ? 0 : clamp((cumulativeDeficitKcal / totalKcal) * 100, 0, 100),
+    bankedByCaloriesKcal,
+    bankedByScaleKcal,
+    remainingKcal: Math.max(totalKcal - bankedByCaloriesKcal, 0),
+    lbByCalories: round1(bankedByCaloriesKcal / KCAL_PER_LB),
+    lbByScale: scaleLbProgress === null ? null : round1(scaleLbProgress),
+    gapKcal: bankedByScaleKcal === null ? null : bankedByScaleKcal - bankedByCaloriesKcal,
+    pctByCalories:
+      totalKcal <= 0 ? 0 : clamp((bankedByCaloriesKcal / totalKcal) * 100, 0, 100),
+    reachedByScale,
+    overshootLb: overshoot !== null && overshoot > 0 && reachedByScale ? overshoot : null,
+  };
+}
+
+export interface Steadiness {
+  baselineLb: number;
+  /** Half-width of the band steadiness is judged inside. */
+  bandLb: number;
+  latestLb: number | null;
+  /** latest − baseline, one decimal. Positive = heavier. */
+  deviationLb: number | null;
+  withinBand: boolean | null;
+}
+
+/** A maintainer's whole scoreboard: how far the scale has drifted from where
+ *  they started, and whether that's still inside the band. */
+export function steadiness(input: {
+  baselineLb: number;
+  latestLb: number | null;
+  bandLb?: number;
+}): Steadiness {
+  const { baselineLb, latestLb, bandLb = 3 } = input;
+  const deviationLb = latestLb === null ? null : round1(latestLb - baselineLb);
+  return {
+    baselineLb,
+    bandLb,
+    latestLb,
+    deviationLb,
+    withinBand: deviationLb === null ? null : Math.abs(deviationLb) <= bandLb,
   };
 }
 
