@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { rangeLabel, relativeLabel, type WeekStatus, isWeekEditable } from "@/lib/weeks";
+import { rangeLabel, relativeLabel, type WeekStatus, freezeReason } from "@/lib/weeks";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +60,8 @@ export default async function WeekPage({
     }),
   ]);
 
-  const locked = !isWeekEditable(status);
+  const frozen = freezeReason(week, today);
+  const locked = frozen !== null;
 
   return (
     <div className="space-y-6">
@@ -79,6 +80,7 @@ export default async function WeekPage({
       <StageAction
         weekId={week.id}
         status={status}
+        frozen={frozen}
         hasContents={week.recipes.length > 0 || week.staples.length > 0}
         needCount={needCount}
       />
@@ -221,20 +223,29 @@ export default async function WeekPage({
         </CardContent>
       </Card>
 
-      {/* Dates — the fix for a week you labelled wrong. Hidden once the week
-          is done: re-dating would rewrite the bank it was judged against. */}
-      {!locked && (
+      {/* Dates — the fix for a week you labelled wrong. A closed week hides it
+          (Revert first); a lapsed week keeps it behind a disclosure, because
+          wrong dates are exactly why a week lapses and it must stay fixable. */}
+      {frozen !== "done" && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            Week dates
+            {frozen === "passed" ? "Wrong dates?" : "Week dates"}
             <InfoTip>
               Planned the right food but dated it wrong? Move the whole week here.
-              Changing the day count re-prorates the bank from your weekly target.
+              {frozen === "passed"
+                ? " A passed week keeps its own bank when it moves — re-dating fixes a mistake, it doesn't hand the week today's target."
+                : " Changing the day count re-prorates the bank from your weekly target."}
             </InfoTip>
           </CardTitle>
         </CardHeader>
         <CardContent>
+          {frozen === "passed" && (
+            <p className="mb-3 text-sm text-muted-foreground">
+              This week has passed, so it's read-only — unless the dates were the
+              mistake. Moving it back onto today's calendar makes it live again.
+            </p>
+          )}
           <form action={updateWeekDates} className="flex flex-wrap items-end gap-2">
             <input type="hidden" name="weekId" value={week.id} />
             <div>

@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { resolveWeek } from "@/lib/queries";
-import { isWeekEditable, type WeekStatus } from "@/lib/weeks";
+import { resolveWeek, todayIso } from "@/lib/queries";
+import { isWeekEditable } from "@/lib/weeks";
 import { DEPARTMENTS, SLOTS } from "@/lib/constants";
 import { parseRecipe, type ParseResult } from "@/lib/claude/parse-recipe";
 
@@ -94,7 +94,7 @@ export async function createRecipe(formData: FormData) {
     const week = targetWeekId
       ? await db.week.findFirst({ where: { id: targetWeekId, userId: user.id } })
       : null;
-    if (week && isWeekEditable(week.status as WeekStatus)) {
+    if (week && isWeekEditable(week, await todayIso())) {
       await db.weekRecipe.upsert({
         where: { weekId_recipeId: { weekId: week.id, recipeId: recipe.id } },
         create: { weekId: week.id, recipeId: recipe.id, portions: fields.servings },

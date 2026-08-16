@@ -12,7 +12,7 @@ import { StageAction } from "@/components/week-stage";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { isListLocked, rangeLabel, type WeekStatus } from "@/lib/weeks";
+import { isListLocked, rangeLabel, type WeekStatus, displayStatus, freezeReason } from "@/lib/weeks";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,10 @@ export default async function ListPage({
   const today = await todayIso();
   const weekOf = week.weekOf.toISOString().slice(0, 10);
   const status = week.status as WeekStatus;
-  const locked = isListLocked(status);
+  // Two locks: the list finishes when shopping does, the week finishes when
+  // it closes or its last day passes. Either one makes this page read-only.
+  const frozen = freezeReason(week, today);
+  const locked = isListLocked(status) || frozen !== null;
   const totals = computeWeekTotals(week);
 
   const items: ReviewItem[] = week.listItems.map((item) => ({
@@ -64,7 +67,7 @@ export default async function ListPage({
           <span className="text-sm text-muted-foreground">
             {rangeLabel(weekOf, week.dayCount)}
           </span>
-          {locked && <Badge variant="outline">saved · {status}</Badge>}
+          {locked && <Badge variant="outline">saved · {displayStatus(week, today)}</Badge>}
         </div>
 
         {!locked && items.length > 0 && (
@@ -166,6 +169,7 @@ export default async function ListPage({
 
           {!locked && (
             <StageAction
+              frozen={frozen}
               weekId={week.id}
               status={status}
               hasContents

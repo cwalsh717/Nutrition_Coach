@@ -4,7 +4,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { isWeekEditable, nextStage, previousStage, type WeekStatus } from "@/lib/weeks";
+import { freezeReason, nextStage, previousStage, weekEnd, type WeekStatus } from "@/lib/weeks";
+import { todayIso } from "@/lib/queries";
 
 function revalidateWeekPages() {
   revalidatePath("/week");
@@ -23,13 +24,35 @@ async function ownedWeek(weekId: string) {
   return { user, week };
 }
 
-const FROZEN = "This week is finished — its numbers are history. Reopen it with Revert to make changes.";
+const FROZEN_DONE =
+  "This week is closed — its numbers are history. Reopen it with Revert to make changes.";
+const FROZEN_PAST =
+  "This week has passed — its numbers are history now. If the dates were wrong, re-date it.";
 
-/** ownedWeek + the content freeze. Every week-content write goes through one
- *  of these three guards; the UI hiding a button is never the real gate. */
+/** The refusal that matches WHY the week is frozen: Revert can reopen a week
+ *  you closed, but it can't thaw time. */
+function frozenError(reason: "done" | "passed"): Error {
+  return new Error(reason === "done" ? FROZEN_DONE : FROZEN_PAST);
+}
+
+/** ownedWeek + the freeze (status OR the calendar). Every week-content write
+ *  goes through one of these guards; the UI hiding a button is never the real
+ *  gate. `today` is read here so no call site has to thread it. */
 async function editableOwnedWeek(weekId: string) {
   const loaded = await ownedWeek(weekId);
-  if (!isWeekEditable(loaded.week.status as WeekStatus)) throw new Error(FROZEN);
+  const frozen = freezeReason(loaded.week, await todayIso());
+  if (frozen) throw frozenError(frozen);
+  return loaded;
+}
+
+/**
+ * Re-dating is the ONE thing a lapsed week still allows — it's the only fix
+ * for a week created with the wrong dates, and a week that freezes with no
+ * escape is a trap. A week you closed on purpose stays closed: Revert first.
+ */
+async function redatableOwnedWeek(weekId: string) {
+  const loaded = await ownedWeek(weekId);
+  if (loaded.week.status === "done") throw new Error(FROZEN_DONE);
   return loaded;
 }
 
@@ -41,7 +64,8 @@ async function ownedEditableWeekRecipe(weekRecipeId: string) {
     include: { week: true },
   });
   if (!wr || wr.week.userId !== user.id) return null;
-  if (!isWeekEditable(wr.week.status as WeekStatus)) throw new Error(FROZEN);
+  const frozen = freezeReason(wr.week, await todayIso());
+  if (frozen) throw frozenError(frozen);
   return wr;
 }
 
@@ -53,7 +77,8 @@ async function ownedEditableWeekStaple(weekStapleId: string) {
     include: { week: true },
   });
   if (!ws || ws.week.userId !== user.id) return null;
-  if (!isWeekEditable(ws.week.status as WeekStatus)) throw new Error(FROZEN);
+  const frozen = freezeReason(ws.week, await todayIso());
+  if (frozen) throw frozenError(frozen);
   return ws;
 }
 
@@ -71,6 +96,12 @@ export async function createWeek(formData: FormData) {
   const weekOf = String(formData.get("weekOf") ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekOf)) throw new Error("Pick a start date.");
   const dayCount = Math.min(7, Math.max(1, Number(formData.get("dayCount")) || 7));
+
+  // A week that already ended would be born frozen — created and instantly
+  // uneditable. Starting mid-past is fine as long as it still covers today.
+  if (weekEnd(weekOf, dayCount) < (await todayIso())) {
+    throw new Error("That week already ended. Pick a start date that still includes today.");
+  }
 
   const profile = await db.profile.findUnique({ where: { userId: user.id } });
   const created = await db.week.create({
@@ -90,21 +121,31 @@ export async function createWeek(formData: FormData) {
 /** Re-date a week you labelled wrong, and/or change how many days it covers. */
 export async function updateWeekDates(formData: FormData) {
   const weekId = String(formData.get("weekId") ?? "");
-  // Re-dating recomputes the bank from the CURRENT profile — right for an
-  // open week (matches syncOpenWeekTargets), a history rewrite for a done one.
-  const { user, week } = await editableOwnedWeek(weekId);
+  const { user, week } = await redatableOwnedWeek(weekId);
 
   const weekOf = String(formData.get("weekOf") ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekOf)) throw new Error("Pick a start date.");
   const dayCount = Math.min(7, Math.max(1, Number(formData.get("dayCount")) || week.dayCount));
 
-  const profile = await db.profile.findUnique({ where: { userId: user.id } });
+  // A live week re-prorates from the current profile (matches
+  // syncOpenWeekTargets). A lapsed week carries its OWN weekly rate along —
+  // fixing its dates must not hand it today's target retroactively.
+  const wasFrozen = freezeReason(week, await todayIso()) !== null;
+  let weeklyRate: number | null;
+  if (wasFrozen) {
+    weeklyRate =
+      week.budgetKcal === null ? null : Math.round((week.budgetKcal / week.dayCount) * 7);
+  } else {
+    const profile = await db.profile.findUnique({ where: { userId: user.id } });
+    weeklyRate = profile?.weeklyKcalBudget ?? null;
+  }
+
   await db.week.update({
     where: { id: week.id },
     data: {
       weekOf: new Date(weekOf + "T00:00:00Z"),
       dayCount,
-      budgetKcal: proratedBank(profile?.weeklyKcalBudget ?? null, dayCount),
+      budgetKcal: proratedBank(weeklyRate, dayCount),
     },
   });
   revalidateWeekPages();
@@ -113,6 +154,8 @@ export async function updateWeekDates(formData: FormData) {
 /** Move a week forward one stage: plan → shop → cook → done. */
 export async function advanceStage(weekId: string) {
   const { week } = await ownedWeek(weekId);
+  // The calendar has the last word: you can't shop for a week that ended.
+  if (freezeReason(week, await todayIso()) === "passed") throw new Error(FROZEN_PAST);
   const next = nextStage(week.status as WeekStatus);
   if (!next) return;
 
@@ -133,6 +176,8 @@ export async function advanceStage(weekId: string) {
 /** Escape hatch — nobody should be trapped in a stage they entered by mistake. */
 export async function revertStage(weekId: string) {
   const { week } = await ownedWeek(weekId);
+  // Revert reopens a week you closed; it can't reopen one time closed.
+  if (freezeReason(week, await todayIso()) === "passed") throw new Error(FROZEN_PAST);
   const prev = previousStage(week.status as WeekStatus);
   if (!prev) return;
   await db.week.update({ where: { id: week.id }, data: { status: prev } });

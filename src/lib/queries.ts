@@ -4,7 +4,7 @@ import { db } from "./db";
 import { localDateKey } from "./dates";
 import { diaryTotals, weekTotals } from "./weekmath";
 import type { CandidateRow } from "./shopping";
-import { currentWeek, defaultWeek, tabOrder, weekEnd, type WeekStatus } from "./weeks";
+import { currentWeek, defaultWeek, tabOrder, weekEnd, type WeekStatus, displayStatus } from "./weeks";
 import {
   effectiveMaintenance, formulaMaintenance, impliedMaintenance, impliedWindow,
   weighInSpanDays, weightTrendLbPerWeek, type EffectiveMaintenance, type WeighIn,
@@ -245,10 +245,12 @@ export function candidateRows(week: ActiveWeekFull): CandidateRow[] {
 export function buildWeekStateSection(
   week: ActiveWeekFull,
   diary: { date: Date; kcal: number; proteinG: number | null }[],
+  /** So the coach hears "closed", not "planning", about a week that lapsed. */
+  today: string,
 ): string {
   const totals = computeWeekTotals(week);
   const lines: string[] = [
-    `Week of ${week.weekOf.toISOString().slice(0, 10)} (status: ${week.status}).`,
+    `Week of ${week.weekOf.toISOString().slice(0, 10)} (status: ${displayStatus(week, today)}).`,
     "",
     "Planned recipes:",
   ];

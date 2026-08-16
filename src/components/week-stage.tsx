@@ -53,12 +53,15 @@ export function WeekStepper({ status }: { status: WeekStatus }) {
 interface ActionProps {
   weekId: string;
   status: WeekStatus;
+  /** Why the week is read-only, if it is. A passed week gets a summary
+   *  instead of CTAs — you can't shop for a week that already ended. */
+  frozen?: "done" | "passed" | null;
   /** Planning can't finish with an empty week — nothing to shop for. */
   hasContents: boolean;
   needCount: number;
 }
 
-export function StageAction({ weekId, status, hasContents, needCount }: ActionProps) {
+export function StageAction({ weekId, status, frozen, hasContents, needCount }: ActionProps) {
   const copy = {
     planning: {
       headline: "Done planning?",
@@ -86,6 +89,22 @@ export function StageAction({ weekId, status, hasContents, needCount }: ActionPr
       cta: "",
     },
   }[status];
+
+  // Time closed this one. No stage to advance, nothing to revert to — offering
+  // "Build the list & start shopping" for a week that already ended is the
+  // ceremony this app stopped pretending to need.
+  if (frozen === "passed") {
+    return (
+      <div className="rounded-xl border border-dashed bg-card/40 p-4">
+        <div className="font-medium">This week has passed.</div>
+        <div className="text-sm text-muted-foreground">
+          Its plan and list are frozen in History
+          {status !== "planning" && ` — it got as far as ${status}`}. If the dates
+          were wrong, fix them below and the week comes back to life.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card/60 p-4">
