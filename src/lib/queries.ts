@@ -1,17 +1,22 @@
 import "server-only";
 import { db } from "./db";
+import { localDateKey } from "./dates";
 import { diaryTotals, weekTotals } from "./weekmath";
 import type { CandidateRow } from "./shopping";
 import { currentWeek, defaultWeek, tabOrder, weekEnd, type WeekStatus } from "./weeks";
 import {
-  effectiveMaintenance, formulaMaintenance, impliedMaintenance,
+  effectiveMaintenance, formulaMaintenance, impliedMaintenance, impliedWindow,
   weightTrendLbPerWeek, type EffectiveMaintenance, type WeighIn,
 } from "./energy";
 import type { Activity, Sex } from "./targets";
 
-/** Today as an ISO date. Every "which week am I in" decision derives from this. */
+/**
+ * Today as a date key, in LOCAL time. Every "which week am I in" decision
+ * derives from this. Production must set the TZ env var (see lib/dates.ts) —
+ * with TZ unset a hosted server's "local" is still UTC.
+ */
 export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return localDateKey();
 }
 
 /** Every week the user has, in tab order (soonest first). */
@@ -123,22 +128,32 @@ export async function getEnergyStatus(userId: string): Promise<EnergyStatus> {
         )
       : null;
 
-  // Implied maintenance reads the window between the first and last weigh-in:
-  // the only stretch where the scale can vouch for the calories.
+  // Implied maintenance runs only on a stretch of CONSECUTIVE logged days
+  // bracketed by weigh-ins. An empty day is unknown and a not-tracked day is
+  // out of scope — either one breaks the stretch instead of being averaged in.
   let impliedKcal: number | null = null;
   if (weighIns.length >= 2) {
-    const first = weighIns[0];
-    const last = weighIns.at(-1)!;
-    const windowDays = Math.round(
-      (Date.parse(last.date) - Date.parse(first.date)) / 86_400_000,
-    );
-    if (windowDays >= 14) {
-      const log = await getFoodLog(userId, first.date, last.date);
+    const [log, untrackedRows] = await Promise.all([
+      getFoodLog(userId, weighIns[0].date, weighIns.at(-1)!.date),
+      db.untrackedDay.findMany({ where: { userId }, select: { date: true } }),
+    ]);
+    const loggedDates = new Set(log.map((e) => e.date.toISOString().slice(0, 10)));
+    const untrackedDates = new Set(untrackedRows.map((u) => u.date.toISOString().slice(0, 10)));
+
+    const window = impliedWindow(weighIns.map((w) => w.date), loggedDates, untrackedDates);
+    if (window) {
+      // Weigh-ins read as morning-of, so intake counts from the first
+      // weigh-in day up to (not including) the last: N days of eating
+      // between two scale readings N days apart.
+      const eatingDays = new Set(window.days.slice(0, -1));
+      const byWeight = new Map(weighIns.map((w) => [w.date, w.weightLb]));
       impliedKcal = impliedMaintenance({
-        consumedKcal: log.reduce((sum, e) => sum + e.kcal, 0),
-        loggedDays: new Set(log.map((e) => e.date.toISOString().slice(0, 10))).size,
-        windowDays,
-        lbChange: last.weightLb - first.weightLb,
+        consumedKcal: log
+          .filter((e) => eatingDays.has(e.date.toISOString().slice(0, 10)))
+          .reduce((sum, e) => sum + e.kcal, 0),
+        loggedDays: eatingDays.size,
+        windowDays: eatingDays.size,
+        lbChange: byWeight.get(window.end)! - byWeight.get(window.start)!,
       });
     }
   }

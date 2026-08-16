@@ -84,6 +84,55 @@ export function impliedMaintenance(input: ImpliedInput): number | null {
   return implied < 1000 || implied > 6000 ? null : implied;
 }
 
+export interface ImpliedWindow {
+  start: string; // weigh-in day opening the stretch
+  end: string; // weigh-in day closing it
+  days: string[]; // every day in [start, end]
+}
+
+/**
+ * Pick the stretch the data-implied maintenance may run on: consecutive
+ * LOGGED days, bracketed by weigh-ins on the first and last day. An empty or
+ * not-tracked day breaks the stretch — averaging across a day we know nothing
+ * about (or were told to ignore) would poison the estimate rather than widen
+ * it. Longest qualifying stretch wins; null if none reaches minDays.
+ *
+ * minDays counts calendar days INCLUSIVE of both weigh-in days, so the
+ * default 15 means 14 measured days between the two scale readings.
+ */
+export function impliedWindow(
+  weighInDates: readonly string[],
+  loggedDates: ReadonlySet<string>,
+  untrackedDates: ReadonlySet<string>,
+  minDays = 15,
+): ImpliedWindow | null {
+  const anchors = [...weighInDates].sort();
+  let best: ImpliedWindow | null = null;
+
+  for (let i = 0; i < anchors.length; i++) {
+    for (let j = i + 1; j < anchors.length; j++) {
+      const days = spanDays(anchors[i], anchors[j]);
+      if (days.length < minDays) continue;
+      if (best && days.length <= best.days.length) continue;
+      if (days.every((d) => loggedDates.has(d) && !untrackedDates.has(d))) {
+        best = { start: anchors[i], end: anchors[j], days };
+      }
+    }
+  }
+  return best;
+}
+
+function spanDays(start: string, end: string): string[] {
+  const out: string[] = [];
+  const d = new Date(start + "T00:00:00Z");
+  const stop = new Date(end + "T00:00:00Z");
+  while (d <= stop) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}
+
 export type MaintenanceSource = "manual" | "implied" | "formula";
 
 export interface EffectiveMaintenance {

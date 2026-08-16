@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
+import { keyToDbDate, localDateKey } from "@/lib/dates";
 import { requireUser } from "@/lib/session";
 import { z } from "zod";
 
@@ -97,7 +98,8 @@ export async function completeOnboarding(formData: FormData) {
   // burn-down has a starting point from day one.
   const weightLb = Number(String(formData.get("weightLb") ?? "").trim());
   if (Number.isFinite(weightLb) && weightLb >= 50 && weightLb <= 1000) {
-    const day = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z");
+    // Local "today" for the key; UTC midnight for the stored @db.Date value.
+    const day = keyToDbDate(localDateKey());
     await db.weightEntry.upsert({
       where: { userId_date: { userId: user.id, date: day } },
       create: { userId: user.id, date: day, weightLb },

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { addEntry, deleteEntry } from "@/actions/diary";
+import { markRangeUntracked, setDayTracked } from "@/actions/untracked";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,11 +46,14 @@ interface Props {
   savedFoods: SavedFood[];
   /** Whether a plan covers these days — changes what the bank label means. */
   hasPlan: boolean;
+  /** Date keys in this week deliberately marked not-tracked. */
+  untracked: string[];
 }
 
 export function Diary({
-  days, today, focusDate, entries, budgetKcal, proteinLowGDay, savedFoods, hasPlan,
+  days, today, focusDate, entries, budgetKcal, proteinLowGDay, savedFoods, hasPlan, untracked,
 }: Props) {
+  const untrackedSet = new Set(untracked);
   const initialDay = days.includes(today) ? today : focusDate;
   const [day, setDay] = useState(initialDay);
   const [description, setDescription] = useState("");
@@ -61,14 +65,33 @@ export function Diary({
   const [pending, startTransition] = useTransition();
 
   const dayEntries = entries.filter((e) => e.date === day);
+  const dayIsUntracked = untrackedSet.has(day);
   const dayKcal = dayEntries.reduce((sum, e) => sum + e.kcal, 0);
   // What one day of the bank is worth. Days can vary — the week is the real
   // judge — but this is the pace line.
   const dayGoal = budgetKcal === null ? null : Math.round(budgetKcal / 7);
   const dayProtein = dayEntries.reduce((sum, e) => sum + (e.proteinG ?? 0), 0);
-  const weekKcal = entries.reduce((sum, e) => sum + e.kcal, 0);
+  // Not-tracked days count nowhere: their entries stay out of the week total
+  // and the bank shrinks to the days actually in play.
+  const weekKcal = entries
+    .filter((e) => !untrackedSet.has(e.date))
+    .reduce((sum, e) => sum + e.kcal, 0);
+  const offDays = days.filter((d) => untrackedSet.has(d)).length;
+  const weekBudget =
+    budgetKcal === null ? null : Math.round((budgetKcal * (7 - offDays)) / 7);
   const isThisWeek = days.includes(today);
-  const daysLeft = days.filter((d) => d >= today).length;
+  const daysLeft = days.filter((d) => d >= today && !untrackedSet.has(d)).length;
+  const [pendingDay, startDayTransition] = useTransition();
+
+  function toggleTracked() {
+    const form = new FormData();
+    form.set("date", day);
+    form.set("tracked", String(dayIsUntracked));
+    startDayTransition(async () => {
+      await setDayTracked(form);
+      toast.success(dayIsUntracked ? "Day back in play" : "Day marked not tracked");
+    });
+  }
 
   async function askAdvisor() {
     if (!description.trim()) return;
@@ -153,12 +176,12 @@ export function Diary({
           }
           warn={dayGoal !== null && dayKcal > dayGoal}
         />
-        {budgetKcal !== null ? (
+        {weekBudget !== null ? (
           <Stat
             label={isThisWeek ? `Bank (${daysLeft} day${daysLeft === 1 ? "" : "s"} left)` : "Bank that week"}
-            value={`${(budgetKcal - weekKcal).toLocaleString()} left`}
-            sub={`${weekKcal.toLocaleString()} of ${budgetKcal.toLocaleString()}${hasPlan ? "" : " (profile target)"}`}
-            warn={budgetKcal - weekKcal < 0}
+            value={`${(weekBudget - weekKcal).toLocaleString()} left`}
+            sub={`${weekKcal.toLocaleString()} of ${weekBudget.toLocaleString()}${hasPlan ? "" : " (profile target)"}${offDays > 0 ? ` · ${offDays} day${offDays === 1 ? "" : "s"} off` : ""}`}
+            warn={weekBudget - weekKcal < 0}
           />
         ) : (
           <Stat label="Week so far" value={`${weekKcal.toLocaleString()} kcal`} />
@@ -192,7 +215,9 @@ export function Diary({
                 "flex-1 shrink-0 rounded-md border px-2 py-1.5 text-sm",
                 d === day ? "border-primary bg-accent font-semibold" : "text-muted-foreground hover:bg-accent/50",
                 d === today && "underline underline-offset-4",
+                untrackedSet.has(d) && "border-dashed opacity-50 line-through decoration-muted-foreground/70",
               )}
+              title={untrackedSet.has(d) ? "not tracked" : undefined}
             >
               {shortDay(d)}
             </button>
@@ -215,8 +240,28 @@ export function Diary({
         </p>
       )}
 
+      {/* A not-tracked day states itself plainly and takes no input */}
+      {dayIsUntracked && (
+        <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">
+            {labelFor(day, today)} is not tracked.
+          </span>{" "}
+          Nothing here counts toward the bank, weekly wins, or maintenance —
+          different from an empty day, which just hasn&apos;t been logged yet.
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-3"
+            onClick={toggleTracked}
+            disabled={pendingDay}
+          >
+            Resume tracking
+          </Button>
+        </div>
+      )}
+
       {/* Saved foods — one tap to log something you eat all the time */}
-      {savedFoods.length > 0 && (
+      {!dayIsUntracked && savedFoods.length > 0 && (
         <div className="space-y-1.5">
           <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
             Tap to log
@@ -243,6 +288,7 @@ export function Diary({
       )}
 
       {/* Quick add */}
+      {!dayIsUntracked && (
       <Card>
         <CardContent className="space-y-3 pt-6">
           <Input
@@ -281,12 +327,18 @@ export function Diary({
           {advisorNote && <p className="text-xs text-muted-foreground">{advisorNote}</p>}
         </CardContent>
       </Card>
+      )}
 
       {/* Entries for the day */}
       <div className="grid gap-1.5">
         {dayEntries.length === 0 && (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            Nothing logged for {labelFor(day, today).toLowerCase()}.
+            {untrackedSet.has(day) ? "" : `Nothing logged for ${labelFor(day, today).toLowerCase()}.`}
+          </p>
+        )}
+        {dayIsUntracked && dayEntries.length > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Logged before the day was marked off — kept, but counted nowhere:
           </p>
         )}
         {dayEntries.map((entry) => (
@@ -310,6 +362,33 @@ export function Diary({
             </button>
           </div>
         ))}
+      </div>
+
+      {/* Day-state controls: mark this day off, or a whole stretch */}
+      <div className="flex flex-wrap items-center gap-3 border-t pt-3">
+        {!dayIsUntracked && (
+          <Button variant="ghost" size="sm" onClick={toggleTracked} disabled={pendingDay}
+            className="text-muted-foreground">
+            Don&apos;t track {labelFor(day, today).toLowerCase()}
+          </Button>
+        )}
+        <details className="text-sm text-muted-foreground">
+          <summary className="cursor-pointer select-none">Mark a range not tracked</summary>
+          <form
+            action={(form) => startDayTransition(async () => {
+              await markRangeUntracked(form);
+              toast.success("Range marked not tracked");
+            })}
+            className="mt-2 flex flex-wrap items-center gap-2"
+          >
+            <Input type="date" name="from" required className="w-40" />
+            <span>to</span>
+            <Input type="date" name="to" required className="w-40" />
+            <Button type="submit" variant="outline" size="sm" disabled={pendingDay}>
+              Mark off
+            </Button>
+          </form>
+        </details>
       </div>
     </div>
   );

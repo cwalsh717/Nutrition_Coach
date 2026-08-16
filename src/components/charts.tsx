@@ -63,6 +63,7 @@ export interface WeekRow {
   avgPerDay: number | null;
   loggedDays: number;
   elapsedDays: number;
+  untrackedDays: number;
   inProgress: boolean;
 }
 
@@ -80,10 +81,10 @@ export function WeeklyWins({ rows }: { rows: WeekRow[] }) {
       {rows.map((row) => {
         const under = (row.delta ?? 0) >= 0;
         const width = row.delta === null ? 0 : (Math.abs(row.delta) / max) * 50;
+        const expected = row.elapsedDays - row.untrackedDays;
         const coverage =
-          row.loggedDays < row.elapsedDays
-            ? `${row.loggedDays}/${row.elapsedDays} days logged`
-            : null;
+          row.loggedDays < expected ? `${row.loggedDays}/${expected} days logged` : null;
+        const off = row.untrackedDays > 0 ? `${row.untrackedDays} off` : null;
         return (
           <div key={row.label} className="flex items-center gap-3">
             {/* Verdict mark: ✓ win, ✗ loss, ○ still running or not scorable */}
@@ -115,6 +116,7 @@ export function WeeklyWins({ rows }: { rows: WeekRow[] }) {
               <div className="text-[10px] text-muted-foreground/70">
                 {row.avgPerDay !== null && `${row.avgPerDay.toLocaleString()}/day`}
                 {coverage && ` · ${coverage}`}
+                {off && ` · ${off}`}
               </div>
             </div>
 

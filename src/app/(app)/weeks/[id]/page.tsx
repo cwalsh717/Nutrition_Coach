@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/session";
+import { localDateKey } from "@/lib/dates";
 import { getFoodLogForWeek, getWeekFull, todayIso } from "@/lib/queries";
 import { weekTotals } from "@/lib/weekmath";
 import { asPlainText, groupByDepartment } from "@/lib/shopping";
@@ -125,7 +126,7 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
           {needItems.length > 0 && (
             <p className="text-sm text-muted-foreground">
               {needItems.length} item{needItems.length === 1 ? "" : "s"}
-              {week.listFinalizedAt && ` · saved ${week.listFinalizedAt.toISOString().slice(0, 10)}`}
+              {week.listFinalizedAt && ` · saved ${localDateKey(week.listFinalizedAt)}`}
             </p>
           )}
         </CardHeader>

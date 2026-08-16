@@ -1,14 +1,21 @@
 // Aggregation for the Progress page. Pure functions over plain rows so the
 // numbers can be unit-tested without a database.
 //
-// Two ideas run through this file:
+// Three ideas run through this file:
 //
 // 1. Weeks here are plain CALENDAR weeks read off the food diary, not Week
 //    plan rows. You can track without ever planning, so progress must not
 //    depend on a plan existing.
-// 2. A week is scored only if it was fully logged. An unlogged day is not a
-//    zero-calorie day — it's an unknown one, and a total built on unknowns
-//    isn't a win or a loss, it's noise.
+// 2. Days come in FOUR states and only one of them counts as evidence:
+//      logged      — has at least one entry; the only state that enters math
+//      empty       — no entries yet; an UNKNOWN, never a zero
+//      not tracked — deliberately excluded (vacation); contributes nothing
+//      future      — hasn't happened
+//    Every sum, average, and verdict runs over logged days ONLY. A week's
+//    bank is scaled to its logged days: log 5 of 7, you're measured against
+//    5/7 of the bank — not handed the other two days as free deficit.
+// 3. A week is only JUDGED (win/loss) when it's complete: finished, and every
+//    day either logged or deliberately not tracked. Unknowns void the verdict.
 
 import { addDays, calendarWeekStart } from "./weeks";
 import { KCAL_PER_LB } from "./energy";
@@ -30,11 +37,13 @@ export interface CalendarWeek {
   consumedKcal: number;
   proteinTotalG: number;
   loggedDays: number;
+  /** Days marked not-tracked that have already happened. */
+  untrackedDays: number;
   /** Days of this week that have actually happened (7 unless it's this week). */
   elapsedDays: number;
   inProgress: boolean;
-  /** Every elapsed day has at least one entry — the precondition for scoring. */
-  fullyLogged: boolean;
+  /** Every elapsed day is logged or not-tracked — nothing unknown. */
+  accounted: boolean;
 }
 
 /**
@@ -42,7 +51,11 @@ export interface CalendarWeek {
  * week containing today. Weeks with nothing logged are kept: a gap is part of
  * the story, and dropping it would silently join two streaks.
  */
-export function calendarWeeks(entries: DiaryEntry[], today: string): CalendarWeek[] {
+export function calendarWeeks(
+  entries: DiaryEntry[],
+  today: string,
+  untracked: ReadonlySet<string> = new Set(),
+): CalendarWeek[] {
   if (entries.length === 0) return [];
 
   const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
@@ -53,10 +66,15 @@ export function calendarWeeks(entries: DiaryEntry[], today: string): CalendarWee
   for (let weekOf = firstWeek; weekOf <= thisWeek; weekOf = addDays(weekOf, 7)) {
     const days = Array.from({ length: 7 }, (_, i) => addDays(weekOf, i));
     const weekEnd = days[6];
-    const mine = sorted.filter((e) => e.date >= weekOf && e.date <= weekEnd);
+    // Entries on a not-tracked day are excluded from all math — the day was
+    // declared out of scope, whatever half-log it holds.
+    const mine = sorted.filter(
+      (e) => e.date >= weekOf && e.date <= weekEnd && !untracked.has(e.date),
+    );
     const inProgress = weekOf === thisWeek;
-    const elapsedDays = inProgress ? days.filter((d) => d <= today).length : 7;
-    const loggedDays = new Set(mine.map((e) => e.date)).size;
+    const elapsed = inProgress ? days.filter((d) => d <= today) : days;
+    const loggedSet = new Set(mine.map((e) => e.date));
+    const untrackedElapsed = elapsed.filter((d) => untracked.has(d)).length;
 
     out.push({
       weekOf,
@@ -65,10 +83,13 @@ export function calendarWeeks(entries: DiaryEntry[], today: string): CalendarWee
       entries: mine,
       consumedKcal: mine.reduce((sum, e) => sum + e.kcal, 0),
       proteinTotalG: mine.reduce((sum, e) => sum + (e.proteinG ?? 0), 0),
-      loggedDays,
-      elapsedDays,
+      loggedDays: loggedSet.size,
+      untrackedDays: untrackedElapsed,
+      elapsedDays: elapsed.length,
       inProgress,
-      fullyLogged: loggedDays >= elapsedDays && elapsedDays > 0,
+      accounted:
+        elapsed.length > 0 &&
+        elapsed.every((d) => loggedSet.has(d) || untracked.has(d)),
     });
   }
   return out;
@@ -83,12 +104,12 @@ export function judgeWeek(consumedKcal: number, bankKcal: number, toleranceKcal:
 
 export interface WeekVerdict extends CalendarWeek {
   bankKcal: number | null;
-  /** What the week is measured against: the full bank, pro-rata while it runs. */
+  /** The bank scaled to logged days — what consumed is actually judged against. */
   bankSoFarKcal: number | null;
-  /** bankSoFar − consumed. Positive = under. */
+  /** bankSoFar − consumed. Positive = under. Null until something is logged. */
   bankDelta: number | null;
   band: Band | null;
-  /** Under the bank plus tolerance, and fully logged. Null = not scorable. */
+  /** Win = complete week, under the scaled bank + tolerance. Null = not judgeable. */
   isWin: boolean | null;
   avgKcalPerLoggedDay: number | null;
   proteinPerLoggedDay: number | null;
@@ -108,20 +129,26 @@ export function verdictFor(
 ): WeekVerdict {
   const { bankKcal, toleranceKcal, maintenanceKcal } = opts;
 
-  // A week still running is only fairly compared against the part of the bank
-  // it has reached — a Tuesday is not a 10,000-calorie deficit.
+  // Only logged days earn bank to eat against. No logging → no comparison at
+  // all: an empty week must never render as a full week of deficit.
   const bankSoFarKcal =
-    bankKcal === null ? null : Math.round((bankKcal * week.elapsedDays) / 7);
+    bankKcal === null || week.loggedDays === 0
+      ? null
+      : Math.round((bankKcal * week.loggedDays) / 7);
 
-  const scorable = bankSoFarKcal !== null && week.fullyLogged && week.loggedDays > 0;
+  // Judged only when the week is over and every day is accounted for.
+  const judgeable = bankSoFarKcal !== null && !week.inProgress && week.accounted;
 
   return {
     ...week,
     bankKcal,
     bankSoFarKcal,
     bankDelta: bankSoFarKcal === null ? null : bankSoFarKcal - week.consumedKcal,
-    band: bankSoFarKcal === null ? null : judgeWeek(week.consumedKcal, bankSoFarKcal, toleranceKcal),
-    isWin: scorable ? week.consumedKcal <= bankSoFarKcal! + toleranceKcal : null,
+    band:
+      bankSoFarKcal === null
+        ? null
+        : judgeWeek(week.consumedKcal, bankSoFarKcal, toleranceKcal),
+    isWin: judgeable ? week.consumedKcal <= bankSoFarKcal! + toleranceKcal : null,
     avgKcalPerLoggedDay:
       week.loggedDays === 0 ? null : Math.round(week.consumedKcal / week.loggedDays),
     proteinPerLoggedDay:
@@ -141,7 +168,7 @@ export function verdictFor(
 /**
  * Wins in a row, counting back from the most recent FINISHED week. The week
  * you're in never counts — it isn't over — but it doesn't break the run
- * either. An unscorable week (patchy logging, no bank) does break it: we
+ * either. An unjudgeable week (unknown days, no bank) does break it: we
  * can't honestly call it a win.
  */
 export function winStreak(verdicts: WeekVerdict[]): number {

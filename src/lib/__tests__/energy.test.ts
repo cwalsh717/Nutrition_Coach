@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   burnDown, effectiveMaintenance, formulaMaintenance, impliedMaintenance,
-  weightTrendLbPerWeek,
+  impliedWindow, weightTrendLbPerWeek,
 } from "../energy";
 
 const VITALS = { sex: "male", age: 45, heightIn: 72, weightLb: 200 } as const;
@@ -128,5 +128,59 @@ describe("burnDown", () => {
     const b = burnDown({ ...goal, cumulativeDeficitKcal: 200_000, latestLb: 155 });
     expect(b.remainingKcal).toBe(0);
     expect(b.pctComplete).toBe(100);
+  });
+});
+
+describe("impliedWindow", () => {
+  // Helper: every day in [from, from+n) is logged.
+  function logged(from: string, n: number): Set<string> {
+    const out = new Set<string>();
+    const d = new Date(from + "T00:00:00Z");
+    for (let i = 0; i < n; i++) {
+      out.add(d.toISOString().slice(0, 10));
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return out;
+  }
+  const none = new Set<string>();
+
+  it("finds a fully-logged stretch bracketed by weigh-ins", () => {
+    const w = impliedWindow(["2026-07-01", "2026-07-20"], logged("2026-07-01", 20), none);
+    expect(w).not.toBeNull();
+    expect(w!.start).toBe("2026-07-01");
+    expect(w!.end).toBe("2026-07-20");
+    expect(w!.days.length).toBe(20);
+  });
+
+  it("rejects a stretch with an unlogged hole", () => {
+    const days = logged("2026-07-01", 20);
+    days.delete("2026-07-10");
+    expect(impliedWindow(["2026-07-01", "2026-07-20"], days, none)).toBeNull();
+  });
+
+  it("a not-tracked day breaks the stretch instead of averaging in", () => {
+    const untracked = new Set(["2026-07-10"]);
+    expect(
+      impliedWindow(["2026-07-01", "2026-07-20"], logged("2026-07-01", 20), untracked),
+    ).toBeNull();
+  });
+
+  it("falls back to a shorter clean stretch between other weigh-ins", () => {
+    // Hole on 7/10 kills 7/1→7/20 and 7/1→7/16, but 7/12→7/28 is clean.
+    const days = logged("2026-07-01", 31);
+    days.delete("2026-07-10");
+    const w = impliedWindow(
+      ["2026-07-01", "2026-07-12", "2026-07-16", "2026-07-28"],
+      days,
+      none,
+    );
+    expect(w).not.toBeNull();
+    expect(w!.start).toBe("2026-07-12");
+    expect(w!.end).toBe("2026-07-28");
+  });
+
+  it("needs 15 calendar days inclusive — two weeks between readings", () => {
+    expect(impliedWindow(["2026-07-01", "2026-07-14"], logged("2026-07-01", 14), none)).toBeNull();
+    expect(impliedWindow(["2026-07-01", "2026-07-15"], logged("2026-07-01", 15), none)).not.toBeNull();
   });
 });

@@ -27,11 +27,19 @@ export default async function TrackPage({
   const focusDate = /^\d{4}-\d{2}-\d{2}$/.test(d ?? "") ? d! : today;
   const days = calendarWeekDays(focusDate);
 
-  const [entries, weeks, profile] = await Promise.all([
+  const [entries, weeks, profile, untrackedRows] = await Promise.all([
     getFoodLog(user.id, days[0], days[6]),
     listWeeks(user.id),
     db.profile.findUnique({ where: { userId: user.id } }),
+    db.untrackedDay.findMany({
+      where: {
+        userId: user.id,
+        date: { gte: new Date(days[0] + "T00:00:00Z"), lte: new Date(days[6] + "T00:00:00Z") },
+      },
+      select: { date: true },
+    }),
   ]);
+  const untracked = untrackedRows.map((u) => u.date.toISOString().slice(0, 10));
 
   // A plan overlapping these days lends its numbers; otherwise fall back to
   // the profile. Neither is required.
@@ -93,6 +101,7 @@ export default async function TrackPage({
         proteinLowGDay={proteinLowGDay}
         savedFoods={savedFoods}
         hasPlan={plan !== null}
+        untracked={untracked}
       />
     </div>
   );

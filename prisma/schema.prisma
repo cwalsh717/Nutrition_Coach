@@ -25,12 +25,13 @@ model User {
   sessions      Session[]
   accounts      Account[]
 
-  profile   Profile?
-  recipes   Recipe[]
-  staples   Staple[]
-  weeks     Week[]
-  foodLog   FoodLogEntry[]
-  weightLog WeightEntry[]
+  profile       Profile?
+  recipes       Recipe[]
+  staples       Staple[]
+  weeks         Week[]
+  foodLog       FoodLogEntry[]
+  weightLog     WeightEntry[]
+  untrackedDays UntrackedDay[]
 
   @@unique([email])
   @@map("user")
@@ -124,6 +125,22 @@ model Profile {
   maintenanceKcal   Int?
   // How far off the bank a week can land and still read as "on target".
   bankToleranceKcal Int @default(500)
+}
+
+// A day deliberately not tracked (vacation, sick, off the wagon on purpose).
+// Presence of a row = "don't count this day anywhere": no bank consumption,
+// no weekly scoring, and it breaks the contiguous stretch the data-implied
+// maintenance runs on. Distinct from "no entries yet" (unknown) and from
+// "logged 0 kcal" (a claim about eating).
+model UntrackedDay {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date      DateTime @db.Date
+  createdAt DateTime @default(now())
+
+  @@unique([userId, date])
+  @@index([userId, date])
 }
 
 // A weigh-in. One per day — saving the same date again replaces it, so a

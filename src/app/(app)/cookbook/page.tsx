@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { localDateKey } from "@/lib/dates";
 import { resolveWeek } from "@/lib/queries";
 import { deleteRecipe, markCooked, setKeeper } from "@/actions/recipes";
 import { addRecipeToWeek } from "@/actions/weeks";
@@ -72,7 +73,7 @@ export default async function CookbookPage({ searchParams }: { searchParams: Pro
               <p className="text-sm text-muted-foreground">
                 {r.servings} servings · {r.kcalPerServing} kcal · {r.proteinG}p / {r.carbsG}c / {r.fatG}f per serving
                 {r.timesMade > 0 && (
-                  <> · made {r.timesMade}×{r.lastMade && `, last ${r.lastMade.toISOString().slice(0, 10)}`}</>
+                  <> · made {r.timesMade}×{r.lastMade && `, last ${localDateKey(r.lastMade)}`}</>
                 )}
               </p>
               <div className="flex flex-wrap gap-1.5">

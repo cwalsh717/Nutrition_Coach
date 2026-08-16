@@ -37,7 +37,7 @@ describe("calendarWeeks", () => {
     const current = weeks.at(-1)!;
     expect(current.inProgress).toBe(true);
     expect(current.elapsedDays).toBe(5); // Sun–Thu
-    expect(current.fullyLogged).toBe(true);
+    expect(current.accounted).toBe(true);
   });
 
   it("counts a day twice-logged once", () => {
@@ -84,7 +84,7 @@ describe("verdictFor", () => {
     expect(v.avgKcalPerLoggedDay).toBe(1900);
   });
 
-  it("measures the running week pro-rata, not against the full bank", () => {
+  it("measures the running week against its logged days, not the full bank", () => {
     const weeks = calendarWeeks(logDays("2026-08-02", 5, 2000), TODAY);
     const v = verdictFor(weeks.at(-1)!, opts);
     expect(v.bankSoFarKcal).toBe(10_000); // 5/7 of the bank
@@ -92,13 +92,55 @@ describe("verdictFor", () => {
     expect(v.band).toBe("on_target");
   });
 
-  it("refuses to score a week with a day missing", () => {
+  it("refuses to judge a week with a day missing, and only banks logged days", () => {
     // Six days logged in a finished week: the seventh is unknown, not zero.
     const [week] = calendarWeeks(logDays("2026-07-26", 6, 2000), TODAY);
     const v = verdictFor(week, opts);
-    expect(v.fullyLogged).toBe(false);
+    expect(v.accounted).toBe(false);
     expect(v.isWin).toBeNull();
-    expect(v.band).toBe("under"); // the bar still draws; it just isn't scored
+    // The comparison runs over six days of bank, not seven — the missing day
+    // contributes nothing to either side.
+    expect(v.bankSoFarKcal).toBe(12_000); // 14,000 × 6/7
+    expect(v.bankDelta).toBe(0);
+    expect(v.band).toBe("on_target");
+  });
+
+  it("shows nothing at all for a week with zero logged days", () => {
+    // A single stale entry creates the week range; the empty week inside it
+    // must not read as a giant deficit (the 0/1-days-logged bug).
+    const entries = [...logDays("2026-07-19", 7, 1900), ...logDays("2026-08-02", 5, 1900)];
+    const weeks = calendarWeeks(entries, TODAY);
+    const empty = weeks.find((w) => w.weekOf === "2026-07-26")!;
+    const v = verdictFor(empty, opts);
+    expect(v.loggedDays).toBe(0);
+    expect(v.bankSoFarKcal).toBeNull();
+    expect(v.bankDelta).toBeNull();
+    expect(v.band).toBeNull();
+    expect(v.isWin).toBeNull();
+  });
+
+  it("excludes not-tracked days from every number", () => {
+    // Sat off (vacation): its entries vanish from totals, the bank scales to
+    // the six tracked days, and the week can still be judged.
+    const entries = logDays("2026-07-26", 7, 2000); // includes Sat 8/1
+    const untracked = new Set(["2026-08-01"]);
+    const [week] = calendarWeeks(entries, TODAY, untracked);
+    expect(week.loggedDays).toBe(6);
+    expect(week.untrackedDays).toBe(1);
+    expect(week.consumedKcal).toBe(12_000); // Sat's 2,000 not counted
+    expect(week.accounted).toBe(true);
+    const v = verdictFor(week, opts);
+    expect(v.bankSoFarKcal).toBe(12_000); // 14,000 × 6/7
+    expect(v.isWin).toBe(true);
+  });
+
+  it("a not-tracked day is not a logged day: no double credit", () => {
+    // Only 5 logged + 1 untracked + 1 unknown → still not judgeable.
+    const entries = logDays("2026-07-26", 5, 2000);
+    const untracked = new Set(["2026-07-31"]);
+    const [week] = calendarWeeks(entries, TODAY, untracked);
+    expect(week.accounted).toBe(false); // Sat 8/1 is unknown
+    expect(verdictFor(week, opts).isWin).toBeNull();
   });
 
   it("has no verdict at all without a bank", () => {

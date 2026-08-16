@@ -23,7 +23,7 @@ export default async function ProgressPage() {
   const user = await requireUser();
   const today = todayIso();
 
-  const [profile, energy, logRows, weightRows] = await Promise.all([
+  const [profile, energy, logRows, weightRows, untrackedRows] = await Promise.all([
     db.profile.findUnique({ where: { userId: user.id } }),
     getEnergyStatus(user.id),
     db.foodLogEntry.findMany({
@@ -36,7 +36,9 @@ export default async function ProgressPage() {
       orderBy: { date: "asc" },
       select: { id: true, date: true, weightLb: true },
     }),
+    db.untrackedDay.findMany({ where: { userId: user.id }, select: { date: true } }),
   ]);
+  const untracked = new Set(untrackedRows.map((u) => u.date.toISOString().slice(0, 10)));
 
   const entries: DiaryEntry[] = logRows.map((e) => ({
     date: e.date.toISOString().slice(0, 10),
@@ -55,7 +57,7 @@ export default async function ProgressPage() {
   // Score each week with the maintenance nearest to it: a manual pin or the
   // data-implied number applies everywhere, but formula maintenance follows
   // the scale week by week, so old weeks keep the burn rate they ran at.
-  const weeks = calendarWeeks(entries, today).map((week) => {
+  const weeks = calendarWeeks(entries, today, untracked).map((week) => {
     let maintenanceKcal = energy.maintenance.value;
     if (
       energy.maintenance.source === "formula" &&
@@ -237,6 +239,7 @@ export default async function ProgressPage() {
                 avgPerDay: w.avgKcalPerLoggedDay,
                 loggedDays: w.loggedDays,
                 elapsedDays: w.elapsedDays,
+                untrackedDays: w.untrackedDays,
                 inProgress: w.inProgress,
               }))}
             />
