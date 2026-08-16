@@ -34,7 +34,7 @@ export default async function WeekPage({
   // No weeks at all — send them straight to the one thing they can do.
   if (!week) redirect("/week/new");
 
-  const today = todayIso();
+  const today = await todayIso();
   const weekOf = week.weekOf.toISOString().slice(0, 10);
   const status = week.status as WeekStatus;
   const totals = computeWeekTotals(week);

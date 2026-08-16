@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function NewWeekPage() {
   const user = await requireUser();
   const weeks = await listWeeks(user.id);
-  const today = todayIso();
+  const today = await todayIso();
 
   // Default to the next Sunday you don't already have a week for — meal prep is
   // planned ahead, so "next week" is the usual answer, not today.

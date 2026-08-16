@@ -11,11 +11,27 @@
 // Every "now" in the app goes through localDateKey; every stored date goes
 // through dbDateToKey/keyToDbDate. Nothing else touches timezones.
 //
-// On a server, "local" means the TZ environment variable — production must
-// set TZ (e.g. America/New_York) or the server's local time is still UTC.
+// "Local" means the USER'S timezone, not the server's: the browser announces
+// its IANA zone in a cookie (see components/timezone-sync.tsx) and the server
+// passes it in here. Without a zone we fall back to the server clock — only
+// ever the first request from a fresh browser.
 
-/** The date key for a real moment (default: now), in local time. */
-export function localDateKey(moment: Date = new Date()): string {
+/** The date key for a real moment (default: now) in the given IANA zone,
+ *  falling back to the process's local time. */
+export function localDateKey(moment: Date = new Date(), timeZone?: string): string {
+  if (timeZone) {
+    try {
+      // en-CA formats as YYYY-MM-DD, exactly our key shape.
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(moment);
+    } catch {
+      // Unknown zone string (tampered cookie) — fall through to server time.
+    }
+  }
   const y = moment.getFullYear();
   const m = String(moment.getMonth() + 1).padStart(2, "0");
   const d = String(moment.getDate()).padStart(2, "0");

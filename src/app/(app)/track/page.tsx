@@ -23,7 +23,7 @@ export default async function TrackPage({
   const user = await requireUser();
   const { d } = await searchParams;
 
-  const today = todayIso();
+  const today = await todayIso();
   const focusDate = /^\d{4}-\d{2}-\d{2}$/.test(d ?? "") ? d! : today;
   const days = calendarWeekDays(focusDate);
 

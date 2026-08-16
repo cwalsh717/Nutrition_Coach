@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 // show up here whether or not a plan covered them.
 export default async function ProgressPage() {
   const user = await requireUser();
-  const today = todayIso();
+  const today = await todayIso();
 
   const [profile, energy, logRows, weightRows, untrackedRows] = await Promise.all([
     db.profile.findUnique({ where: { userId: user.id } }),

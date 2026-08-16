@@ -33,7 +33,7 @@ export default async function ListPage({
     );
   }
 
-  const today = todayIso();
+  const today = await todayIso();
   const weekOf = week.weekOf.toISOString().slice(0, 10);
   const status = week.status as WeekStatus;
   const locked = isListLocked(status);

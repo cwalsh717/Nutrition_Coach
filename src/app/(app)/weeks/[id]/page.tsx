@@ -54,7 +54,7 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
         <div>
           <h1 className="text-2xl">{rangeLabel(weekOf, week.dayCount)}</h1>
           <p className="text-sm text-muted-foreground">
-            {relativeLabel(weekOf, week.dayCount, todayIso())}
+            {relativeLabel(weekOf, week.dayCount, await todayIso())}
             {week.dayCount < 7 && ` · ${week.dayCount}-day week`}
           </p>
         </div>

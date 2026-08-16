@@ -33,7 +33,7 @@ export default async function ChatPage({
 
   return (
     <div className="space-y-4">
-      <WeekTabs weeks={weeks} selectedId={week.id} today={todayIso()} basePath="/week/chat" />
+      <WeekTabs weeks={weeks} selectedId={week.id} today={await todayIso()} basePath="/week/chat" />
       <h1 className="flex items-center gap-2 text-2xl">
         Coach
         <InfoTip>

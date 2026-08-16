@@ -31,7 +31,7 @@ export default async function WeeksPage() {
   ]);
   const loggedDates = log.map((e) => e.date.toISOString().slice(0, 10));
 
-  const today = todayIso();
+  const today = await todayIso();
 
   return (
     <div className="space-y-4">

@@ -1,4 +1,5 @@
 import "server-only";
+import { cookies } from "next/headers";
 import { db } from "./db";
 import { localDateKey } from "./dates";
 import { diaryTotals, weekTotals } from "./weekmath";
@@ -11,12 +12,15 @@ import {
 import type { Activity, Sex } from "./targets";
 
 /**
- * Today as a date key, in LOCAL time. Every "which week am I in" decision
- * derives from this. Production must set the TZ env var (see lib/dates.ts) —
- * with TZ unset a hosted server's "local" is still UTC.
+ * Today as a date key in the USER'S timezone, read from the cookie the
+ * browser sets on first load (components/timezone-sync.tsx). Every "which
+ * week am I in" decision derives from this. Falls back to the server clock
+ * only when the cookie hasn't landed yet.
  */
-export function todayIso(): string {
-  return localDateKey();
+export async function todayIso(): Promise<string> {
+  const jar = await cookies();
+  const zone = jar.get("tz")?.value;
+  return localDateKey(new Date(), zone ? decodeURIComponent(zone) : undefined);
 }
 
 /** Every week the user has, in tab order (soonest first). */
@@ -61,7 +65,7 @@ export async function resolveWeek(userId: string, requestedId?: string) {
     if (asked) return asked;
   }
   const summaries = await listWeeks(userId);
-  const pick = defaultWeek(summaries, todayIso());
+  const pick = defaultWeek(summaries, await todayIso());
   return pick ? getWeekFull(userId, pick.id) : null;
 }
 
@@ -175,7 +179,7 @@ export async function getEnergyStatus(userId: string): Promise<EnergyStatus> {
 /** The week you're actually eating right now — used for plan context, not the diary. */
 export async function getCurrentWeekFull(userId: string) {
   const summaries = await listWeeks(userId);
-  const now = currentWeek(summaries, todayIso());
+  const now = currentWeek(summaries, await todayIso());
   return now ? getWeekFull(userId, now.id) : null;
 }
 
@@ -350,7 +354,7 @@ export async function buildProgressSection(userId: string): Promise<string> {
       kcal: e.kcal,
       proteinG: e.proteinG,
     })),
-    todayIso(),
+    await todayIso(),
   ).map((w) =>
     verdictFor(w, {
       bankKcal: profile?.weeklyKcalBudget ?? null,
