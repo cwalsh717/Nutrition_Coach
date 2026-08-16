@@ -22,6 +22,16 @@ export function isListLocked(status: WeekStatus): boolean {
   return stageIndex(status) > stageIndex("shopping");
 }
 
+/**
+ * Content edits are allowed until the week is done. Deliberately looser than
+ * isListLocked — you can still adjust meals while cooking, but a done week is
+ * history and history doesn't move. The ONE source of truth for the freeze:
+ * never inline `status === "done"` anywhere else.
+ */
+export function isWeekEditable(status: WeekStatus): boolean {
+  return status !== "done";
+}
+
 export function nextStage(status: WeekStatus): WeekStatus | null {
   const i = stageIndex(status);
   return i < 0 || i >= STAGES.length - 1 ? null : STAGES[i + 1].status;

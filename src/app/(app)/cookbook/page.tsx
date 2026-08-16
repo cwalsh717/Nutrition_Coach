@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { isWeekEditable, rangeLabel, type WeekStatus } from "@/lib/weeks";
 import { localDateKey } from "@/lib/dates";
 import { resolveWeek } from "@/lib/queries";
 import { deleteRecipe, markCooked, setKeeper } from "@/actions/recipes";
@@ -28,10 +29,18 @@ export default async function CookbookPage({ searchParams }: { searchParams: Pro
   if (keeper === "retired") where.keeper = false;
   if (keeper === "unrated") where.keeper = null;
 
-  const [recipes, activeWeek] = await Promise.all([
+  const [recipes, resolvedWeek] = await Promise.all([
     db.recipe.findMany({ where, orderBy: { name: "asc" } }),
     resolveWeek(user.id),
   ]);
+  // Only an editable week may receive recipes, and the button names it — an
+  // unlabeled "Add to week" writing to a mystery (possibly finished) week was
+  // how frozen history got edited.
+  const activeWeek =
+    resolvedWeek && isWeekEditable(resolvedWeek.status as WeekStatus) ? resolvedWeek : null;
+  const activeWeekLabel = activeWeek
+    ? rangeLabel(activeWeek.weekOf.toISOString().slice(0, 10), activeWeek.dayCount)
+    : null;
 
   return (
     <div className="space-y-4">
@@ -81,8 +90,8 @@ export default async function CookbookPage({ searchParams }: { searchParams: Pro
                   <Link href={`/cookbook/${r.id}`}>Edit</Link>
                 </Button>
                 {activeWeek && (
-                  <form action={addRecipeToWeek.bind(null, activeWeek!.id, r.id, undefined)}>
-                    <Button size="sm">Add to week</Button>
+                  <form action={addRecipeToWeek.bind(null, activeWeek.id, r.id, undefined)}>
+                    <Button size="sm">Add to {activeWeekLabel}</Button>
                   </form>
                 )}
                 <form action={markCooked.bind(null, r.id)}>

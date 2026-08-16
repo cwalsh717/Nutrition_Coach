@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { nextStage, previousStage, type WeekStatus } from "@/lib/weeks";
+import { isWeekEditable, nextStage, previousStage, type WeekStatus } from "@/lib/weeks";
 
 function revalidateWeekPages() {
   revalidatePath("/week");
@@ -21,6 +21,40 @@ async function ownedWeek(weekId: string) {
   const week = await db.week.findFirst({ where: { id: weekId, userId: user.id } });
   if (!week) throw new Error("Week not found.");
   return { user, week };
+}
+
+const FROZEN = "This week is finished — its numbers are history. Reopen it with Revert to make changes.";
+
+/** ownedWeek + the content freeze. Every week-content write goes through one
+ *  of these three guards; the UI hiding a button is never the real gate. */
+async function editableOwnedWeek(weekId: string) {
+  const loaded = await ownedWeek(weekId);
+  if (!isWeekEditable(loaded.week.status as WeekStatus)) throw new Error(FROZEN);
+  return loaded;
+}
+
+/** A week's recipe row, owned and on an editable week — or null. */
+async function ownedEditableWeekRecipe(weekRecipeId: string) {
+  const user = await requireUser();
+  const wr = await db.weekRecipe.findUnique({
+    where: { id: weekRecipeId },
+    include: { week: true },
+  });
+  if (!wr || wr.week.userId !== user.id) return null;
+  if (!isWeekEditable(wr.week.status as WeekStatus)) throw new Error(FROZEN);
+  return wr;
+}
+
+/** A week's staple row, owned and on an editable week — or null. */
+async function ownedEditableWeekStaple(weekStapleId: string) {
+  const user = await requireUser();
+  const ws = await db.weekStaple.findUnique({
+    where: { id: weekStapleId },
+    include: { week: true },
+  });
+  if (!ws || ws.week.userId !== user.id) return null;
+  if (!isWeekEditable(ws.week.status as WeekStatus)) throw new Error(FROZEN);
+  return ws;
 }
 
 /** The weekly target, prorated for however many days this week covers. */
@@ -56,7 +90,9 @@ export async function createWeek(formData: FormData) {
 /** Re-date a week you labelled wrong, and/or change how many days it covers. */
 export async function updateWeekDates(formData: FormData) {
   const weekId = String(formData.get("weekId") ?? "");
-  const { user, week } = await ownedWeek(weekId);
+  // Re-dating recomputes the bank from the CURRENT profile — right for an
+  // open week (matches syncOpenWeekTargets), a history rewrite for a done one.
+  const { user, week } = await editableOwnedWeek(weekId);
 
   const weekOf = String(formData.get("weekOf") ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekOf)) throw new Error("Pick a start date.");
@@ -113,12 +149,16 @@ export async function deleteWeek(weekId: string) {
 /* ---------------- contents ---------------- */
 
 export async function addRecipeToWeek(weekId: string, recipeId: string, portions?: number) {
-  const { user, week } = await ownedWeek(weekId);
+  const { user, week } = await editableOwnedWeek(weekId);
   const recipe = await db.recipe.findFirst({ where: { id: recipeId, userId: user.id } });
   if (!recipe) return;
+  const safePortions =
+    portions !== undefined && Number.isFinite(portions)
+      ? Math.max(1, Math.round(portions))
+      : recipe.servings;
   await db.weekRecipe.upsert({
     where: { weekId_recipeId: { weekId: week.id, recipeId } },
-    create: { weekId: week.id, recipeId, portions: portions ?? recipe.servings },
+    create: { weekId: week.id, recipeId, portions: safePortions },
     update: {},
   });
   revalidateWeekPages();
@@ -126,33 +166,27 @@ export async function addRecipeToWeek(weekId: string, recipeId: string, portions
 }
 
 export async function updatePortions(weekRecipeId: string, portions: number) {
-  const user = await requireUser();
-  const wr = await db.weekRecipe.findUnique({
-    where: { id: weekRecipeId },
-    include: { week: true },
-  });
-  if (!wr || wr.week.userId !== user.id) return;
+  // A stray keystroke is a non-event, not a crash: invalid number = no change.
+  if (!Number.isFinite(portions)) return;
+  const wr = await ownedEditableWeekRecipe(weekRecipeId);
+  if (!wr) return;
   await db.weekRecipe.update({
-    where: { id: weekRecipeId },
+    where: { id: wr.id },
     data: { portions: Math.max(1, Math.round(portions)) },
   });
   revalidateWeekPages();
 }
 
 export async function removeRecipeFromWeek(weekRecipeId: string) {
-  const user = await requireUser();
-  const wr = await db.weekRecipe.findUnique({
-    where: { id: weekRecipeId },
-    include: { week: true },
-  });
-  if (!wr || wr.week.userId !== user.id) return;
-  await db.weekRecipe.delete({ where: { id: weekRecipeId } });
+  const wr = await ownedEditableWeekRecipe(weekRecipeId);
+  if (!wr) return;
+  await db.weekRecipe.delete({ where: { id: wr.id } });
   revalidateWeekPages();
 }
 
 /** Snapshot-copy a staple from the library onto a week. */
 export async function addStapleToWeek(weekId: string, stapleId: string, qty?: number) {
-  const { user, week } = await ownedWeek(weekId);
+  const { user, week } = await editableOwnedWeek(weekId);
   const staple = await db.staple.findFirst({
     where: { id: stapleId, userId: user.id, kind: "grocery" },
   });
@@ -165,33 +199,29 @@ export async function addStapleToWeek(weekId: string, stapleId: string, qty?: nu
       kcal: staple.kcal,
       proteinG: staple.proteinG,
       department: staple.department,
-      qty: Math.max(1, Math.round(qty ?? staple.defaultQty)),
+      qty:
+        qty !== undefined && Number.isFinite(qty)
+          ? Math.max(1, Math.round(qty))
+          : staple.defaultQty,
     },
   });
   revalidateWeekPages();
 }
 
 export async function updateWeekStapleQty(weekStapleId: string, qty: number) {
-  const user = await requireUser();
-  const ws = await db.weekStaple.findUnique({
-    where: { id: weekStapleId },
-    include: { week: true },
-  });
-  if (!ws || ws.week.userId !== user.id) return;
+  if (!Number.isFinite(qty)) return;
+  const ws = await ownedEditableWeekStaple(weekStapleId);
+  if (!ws) return;
   await db.weekStaple.update({
-    where: { id: weekStapleId },
+    where: { id: ws.id },
     data: { qty: Math.max(1, Math.round(qty)) },
   });
   revalidateWeekPages();
 }
 
 export async function removeWeekStaple(weekStapleId: string) {
-  const user = await requireUser();
-  const ws = await db.weekStaple.findUnique({
-    where: { id: weekStapleId },
-    include: { week: true },
-  });
-  if (!ws || ws.week.userId !== user.id) return;
-  await db.weekStaple.delete({ where: { id: weekStapleId } });
+  const ws = await ownedEditableWeekStaple(weekStapleId);
+  if (!ws) return;
+  await db.weekStaple.delete({ where: { id: ws.id } });
   revalidateWeekPages();
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   calendarWeekDays, calendarWeekStart, classify, coversDate, currentWeek,
-  defaultWeek, isListLocked, nextStage, previousStage, rangeLabel,
-  relativeLabel, tabOrder, weekEnd, type WeekLike,
+  defaultWeek, isListLocked, isWeekEditable, nextStage, previousStage,
+  rangeLabel, relativeLabel, tabOrder, weekEnd, type WeekLike,
 } from "../weeks";
 
 const TODAY = "2026-07-31"; // a Friday

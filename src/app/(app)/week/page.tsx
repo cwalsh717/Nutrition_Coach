@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { rangeLabel, relativeLabel, type WeekStatus } from "@/lib/weeks";
+import { rangeLabel, relativeLabel, type WeekStatus, isWeekEditable } from "@/lib/weeks";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +60,7 @@ export default async function WeekPage({
     }),
   ]);
 
-  const locked = status === "done";
+  const locked = !isWeekEditable(status);
 
   return (
     <div className="space-y-6">
@@ -221,7 +221,9 @@ export default async function WeekPage({
         </CardContent>
       </Card>
 
-      {/* Dates — the fix for a week you labelled wrong */}
+      {/* Dates — the fix for a week you labelled wrong. Hidden once the week
+          is done: re-dating would rewrite the bank it was judged against. */}
+      {!locked && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -256,6 +258,7 @@ export default async function WeekPage({
           </form>
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }

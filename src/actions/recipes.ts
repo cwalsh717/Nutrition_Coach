@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { resolveWeek } from "@/lib/queries";
+import { isWeekEditable, type WeekStatus } from "@/lib/weeks";
 import { DEPARTMENTS, SLOTS } from "@/lib/constants";
 import { parseRecipe, type ParseResult } from "@/lib/claude/parse-recipe";
 
@@ -38,7 +39,8 @@ function ingredientsFromForm(formData: FormData): IngredientInput[] {
     if (!name) continue; // blanked-out row = deleted
     rows.push({
       name,
-      qty: qtys[i]?.trim() ? Number(qtys[i]) : null,
+      // Unparseable amounts mean "to taste", same as blank — never NaN to the DB.
+      qty: qtys[i]?.trim() && Number.isFinite(Number(qtys[i])) ? Number(qtys[i]) : null,
       unit: (units[i] ?? "").trim(),
       department: (DEPARTMENTS as readonly string[]).includes(departments[i])
         ? departments[i]
@@ -84,12 +86,19 @@ export async function createRecipe(formData: FormData) {
     },
   });
 
-  // Optional "save and add to this week" path from the ingest review form.
+  // Optional "save and add to <week>" path from the ingest review form. The
+  // form names its target explicitly; if that exact week is gone or frozen by
+  // submit time, we skip — never silently retarget to some other week.
   if (formData.get("addToWeek") === "true") {
-    const week = await resolveWeek(user.id);
-    if (week) {
-      await db.weekRecipe.create({
-        data: { weekId: week.id, recipeId: recipe.id, portions: fields.servings },
+    const targetWeekId = String(formData.get("targetWeekId") ?? "");
+    const week = targetWeekId
+      ? await db.week.findFirst({ where: { id: targetWeekId, userId: user.id } })
+      : null;
+    if (week && isWeekEditable(week.status as WeekStatus)) {
+      await db.weekRecipe.upsert({
+        where: { weekId_recipeId: { weekId: week.id, recipeId: recipe.id } },
+        create: { weekId: week.id, recipeId: recipe.id, portions: fields.servings },
+        update: {},
       });
       revalidatePath("/week");
     }
@@ -124,6 +133,15 @@ export async function deleteRecipe(recipeId: string) {
   const user = await requireUser();
   const existing = await db.recipe.findUnique({ where: { id: recipeId } });
   if (!existing || existing.userId !== user.id) throw new Error("Not your recipe.");
+  // Weeks hold references, not copies, of recipes — deleting one that any
+  // week used would tear a hole in history (and the FK would crash anyway).
+  const usedBy = await db.weekRecipe.count({ where: { recipeId } });
+  if (usedBy > 0) {
+    throw new Error(
+      `This recipe is part of ${usedBy} week${usedBy === 1 ? "" : "s"} of history. ` +
+        "Retire it instead — retired recipes keep old weeks intact and drop out of planning.",
+    );
+  }
   await db.recipe.delete({ where: { id: recipeId } });
   revalidatePath("/cookbook");
 }
