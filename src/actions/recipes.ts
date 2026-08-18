@@ -150,8 +150,8 @@ export async function deleteRecipe(
     return {
       ok: false,
       error:
-        `This recipe is part of ${usedBy} week${usedBy === 1 ? "" : "s"} of history. ` +
-        "Retire it instead — retired recipes keep old weeks intact and drop out of planning.",
+        `This recipe is part of ${usedBy} week${usedBy === 1 ? "" : "s"} of history, ` +
+        "so deleting it would tear a hole in weeks you've already finished.",
     };
   }
   await db.recipe.delete({ where: { id: recipeId } });
@@ -160,12 +160,3 @@ export async function deleteRecipe(
   return { ok: true };
 }
 
-/** keeper: true = keeper, false = retired, null = back to unrated */
-export async function setKeeper(recipeId: string, keeper: boolean | null) {
-  const user = await requireUser();
-  const existing = await db.recipe.findUnique({ where: { id: recipeId } });
-  if (!existing || existing.userId !== user.id) throw new Error("Not your recipe.");
-  await db.recipe.update({ where: { id: recipeId }, data: { keeper } });
-  revalidatePath("/library");
-  revalidatePath("/track"); // retiring a recipe pulls its tap-to-log chip
-}

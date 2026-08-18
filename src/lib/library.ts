@@ -1,5 +1,11 @@
-// Search and filtering for the Library — one page holding recipes, groceries
-// and takeout. Pure functions only: the page fetches, these decide what shows.
+// Search and filtering for the Library — one page holding the Cook Book and a
+// flat list of Foods. Pure functions only: the page fetches, these decide what
+// shows.
+//
+// Foods have no categories, only CAPABILITIES derived from their own data: a
+// food logs on Track because it has calories, and joins shopping because the
+// user said they buy it. Nothing here is a drawer an item has to be filed into,
+// which is the whole point — plenty of foods are both.
 //
 // Two rules worth stating out loud:
 //   - Nothing here re-sorts. Rows arrive in the database's `name asc` order and
@@ -11,14 +17,13 @@
 
 import { SLOT_LABELS } from "./constants";
 
-export type LibraryType = "all" | "recipes" | "groceries" | "takeout";
-export type KeeperFilter = "all" | "keeper" | "unrated" | "retired";
+/** Derived, never user-assigned — these read the data, they don't label it. */
+export type FoodFilter = "all" | "track" | "shopping";
 
 export interface RecipeLike {
   id: string;
   name: string;
   slot: string;
-  keeper: boolean | null; // null = unrated, true = keeper, false = retired
 }
 
 export interface FoodLike {
@@ -26,14 +31,12 @@ export interface FoodLike {
   name: string;
   kind: "grocery" | "quick_eat";
   servingNote: string;
+  kcal: number | null;
 }
 
 export interface LibraryFilters {
   query: string;
-  type: LibraryType;
-  keeper: KeeperFilter;
-  /** "" = any slot. Only ever applied to recipes. */
-  slot: string;
+  food: FoodFilter;
   /** Rows the query may never hide — the card the user has open for editing. */
   pinnedIds?: readonly string[];
 }
@@ -57,55 +60,65 @@ export function matchesQuery(haystacks: readonly string[], query: string): boole
   return q.split(" ").every((token) => hay.includes(token));
 }
 
+export interface FoodCapabilities {
+  /** Has calories, so one tap on Track logs it instead of prefilling the form. */
+  logsOnTrack: boolean;
+  /** The user buys it at the store, so it can join a week and its list. */
+  shoppingItem: boolean;
+}
+
+/**
+ * What a food can DO, read straight off its columns. A food may have both, one,
+ * or neither — an Uncrustable is bought by the box and logged by the unit, and
+ * a name with nothing filled in yet is simply a name.
+ *
+ * `kcal: 0` counts as set. Blank input stores null; a typed zero is a real
+ * answer ("this drink has no calories") and stays loggable.
+ */
+export function foodCapabilities(food: FoodLike): FoodCapabilities {
+  return {
+    logsOnTrack: food.kcal !== null,
+    shoppingItem: food.kind === "grocery",
+  };
+}
+
+export function matchesFoodFilter(food: FoodLike, filter: FoodFilter): boolean {
+  if (filter === "all") return true;
+  const caps = foodCapabilities(food);
+  return filter === "track" ? caps.logsOnTrack : caps.shoppingItem;
+}
+
 export interface LibraryBuckets<R, F> {
   recipes: R[];
-  groceries: F[];
-  takeout: F[];
-  /** Across all three — drives one "nothing matches" state, not three. */
+  foods: F[];
+  /** Across both — drives one "nothing matches" state, not two. */
   total: number;
 }
 
 /**
- * Split the library into its three sections under the current search and
- * filters. Keeper and slot narrow recipes only; they never touch food rows.
+ * Split the library into its two sections under the current search and filter.
+ * The capability filter narrows foods only; it never touches the Cook Book.
  */
 export function filterLibrary<R extends RecipeLike, F extends FoodLike>(
   input: { recipes: readonly R[]; foods: readonly F[] },
   filters: LibraryFilters,
 ): LibraryBuckets<R, F> {
   const pinned = new Set(filters.pinnedIds ?? []);
-  const { type } = filters;
 
-  const recipes =
-    type === "all" || type === "recipes"
-      ? input.recipes.filter((r) => {
-          if (filters.keeper === "keeper" && r.keeper !== true) return false;
-          if (filters.keeper === "retired" && r.keeper !== false) return false;
-          if (filters.keeper === "unrated" && r.keeper !== null) return false;
-          if (filters.slot && r.slot !== filters.slot) return false;
-          if (pinned.has(r.id)) return true;
-          return matchesQuery([r.name, SLOT_LABELS[r.slot] ?? r.slot], filters.query);
-        })
-      : [];
+  const recipes = input.recipes.filter(
+    (r) =>
+      pinned.has(r.id) ||
+      matchesQuery([r.name, SLOT_LABELS[r.slot] ?? r.slot], filters.query),
+  );
 
-  const foodsOfKind = (kind: FoodLike["kind"], show: boolean) =>
-    show
-      ? input.foods.filter(
-          (f) =>
-            f.kind === kind &&
-            (pinned.has(f.id) || matchesQuery([f.name, f.servingNote], filters.query)),
-        )
-      : [];
+  const foods = input.foods.filter((f) => {
+    // The pin outranks the search box, never the capability filter — switching
+    // filters is an explicit "show me something else".
+    if (!matchesFoodFilter(f, filters.food)) return false;
+    return pinned.has(f.id) || matchesQuery([f.name, f.servingNote], filters.query);
+  });
 
-  const groceries = foodsOfKind("grocery", type === "all" || type === "groceries");
-  const takeout = foodsOfKind("quick_eat", type === "all" || type === "takeout");
-
-  return {
-    recipes,
-    groceries,
-    takeout,
-    total: recipes.length + groceries.length + takeout.length,
-  };
+  return { recipes, foods, total: recipes.length + foods.length };
 }
 
 export type TapKind = "quick_eat" | "grocery" | "recipe";
@@ -113,9 +126,10 @@ export type TapKind = "quick_eat" | "grocery" | "recipe";
 const TAP_RANK: Record<TapKind, number> = { quick_eat: 0, grocery: 1, recipe: 2 };
 
 /**
- * Tap-to-log chip order on Track: takeout first (logged on the fly most), then
- * groceries, then recipes. Anything without saved calories sinks to the end —
- * those chips prefill the form rather than logging, so they earn less room.
+ * Tap-to-log chip order on Track: foods you don't shop for first (the ones
+ * logged on the fly most), then store foods, then recipes. Anything without
+ * saved calories sinks to the end — those chips prefill the form rather than
+ * logging, so they earn less room.
  */
 export function tapToLogOrder<T extends { kind: TapKind; kcal: number | null }>(
   items: readonly T[],

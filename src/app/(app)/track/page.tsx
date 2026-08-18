@@ -40,12 +40,8 @@ export default async function TrackPage({
         proteinG: true, carbsG: true, fatG: true, servingNote: true,
       },
     }),
-    // Retired recipes drop out of the surfaces that suggest food — same promise
-    // the delete guard makes — so they get no chip. Spelled as an explicit OR:
-    // `keeper: { not: false }` would also drop the unrated ones, since SQL's
-    // `keeper <> false` is NULL, not true, for a NULL keeper.
     db.recipe.findMany({
-      where: { userId: user.id, OR: [{ keeper: true }, { keeper: null }] },
+      where: { userId: user.id },
       orderBy: { name: "asc" },
       select: {
         id: true, name: true, kcalPerServing: true,

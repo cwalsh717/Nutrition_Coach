@@ -40,20 +40,16 @@ export default async function WeekPage({
   const totals = computeWeekTotals(week);
   const needCount = week.listItems.filter((i) => i.status === "need").length;
 
-  // "Not retired" has to be spelled out: `NOT { keeper: false }` silently drops
-  // unrated recipes, because SQL's NOT(NULL = false) is UNKNOWN, not true.
-  const notRetired = [{ keeper: null }, { keeper: true }];
-
   const [mains, fillers, allStaples] = await Promise.all([
     db.recipe.findMany({
-      where: { userId: user.id, slot: "main", OR: notRetired },
+      where: { userId: user.id, slot: "main" },
       orderBy: { name: "asc" },
     }),
     db.recipe.findMany({
-      where: { userId: user.id, slot: { not: "main" }, OR: notRetired },
+      where: { userId: user.id, slot: { not: "main" } },
       orderBy: { name: "asc" },
     }),
-    // Only groceries can be planned into a week — quick eats are log-only.
+    // Only store foods can be planned into a week — the rest are log-only.
     db.staple.findMany({
       where: { userId: user.id, kind: "grocery" },
       orderBy: { name: "asc" },

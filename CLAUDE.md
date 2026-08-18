@@ -51,10 +51,12 @@ framework code. Heed deprecation notices.
 - `src/lib/` — pure math (`energy.ts`, `progress.ts`, `weeks.ts`,
   `weekmath.ts`, `shopping.ts`, `targets.ts`), unit-tested with vitest.
   **New arithmetic goes here with tests first**, then gets wired to a page.
-- `src/lib/claude/` — the three Anthropic calls (recipe parse, food estimate,
-  coach), all `server-only`, all strict-JSON + Zod with typed error chains
-  that return friendly `{ok:false, error}` — a failed parse must never lose
-  the user's paste.
+- `src/lib/claude/` — the four Anthropic calls (recipe parse, food estimate,
+  coach, department classify), all `server-only`, all strict-JSON + Zod with
+  typed error chains that return friendly `{ok:false, error}` — a failed parse
+  must never lose the user's paste. The classifier runs in `after()` so a save
+  never waits on it, and its schema lives in `lib/departments.ts` so it stays
+  testable without a network call.
 - `src/components/` — UI. Charts are plain CSS/SVG, no chart library.
 
 ## Hard invariants

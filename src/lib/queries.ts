@@ -411,14 +411,13 @@ export async function buildCookbookSection(userId: string): Promise<string> {
   const recipes = await db.recipe.findMany({
     where: { userId },
     orderBy: { name: "asc" },
-    select: { name: true, slot: true, servings: true, kcalPerServing: true, proteinG: true, keeper: true },
+    select: { name: true, slot: true, servings: true, kcalPerServing: true, proteinG: true },
   });
   if (recipes.length === 0) return "Cook Book: empty.";
   const lines = ["Cook Book:"];
   for (const r of recipes) {
-    const tag = r.keeper === true ? "keeper" : r.keeper === false ? "retired" : "unrated";
     lines.push(
-      `  - ${r.name} [${r.slot}, ${tag}]: ${r.servings} servings, ${r.kcalPerServing} kcal / ${r.proteinG} g protein per serving`,
+      `  - ${r.name} [${r.slot}]: ${r.servings} servings, ${r.kcalPerServing} kcal / ${r.proteinG} g protein per serving`,
     );
   }
   return lines.join("\n");

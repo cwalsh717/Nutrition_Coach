@@ -22,15 +22,18 @@ export default async function LibraryPage() {
       orderBy: { name: "asc" },
       select: {
         id: true, name: true, slot: true, servings: true, kcalPerServing: true,
-        proteinG: true, carbsG: true, fatG: true, keeper: true,
+        proteinG: true, carbsG: true, fatG: true,
       },
     }),
+    // No `department` or `defaultQty`: the Library neither shows nor edits them.
+    // Department is filled in by the classifier and only ever surfaces as the
+    // shopping list's grouping.
     db.staple.findMany({
       where: { userId: user.id },
       orderBy: { name: "asc" },
       select: {
         id: true, name: true, kind: true, kcal: true, proteinG: true,
-        carbsG: true, fatG: true, servingNote: true, defaultQty: true, department: true,
+        carbsG: true, fatG: true, servingNote: true,
       },
     }),
   ]);
