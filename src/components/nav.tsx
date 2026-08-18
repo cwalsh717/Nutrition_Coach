@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import {
-  BookOpen, CalendarDays, MessageCircle, NotebookPen, TrendingUp, User,
+  BookOpen, CalendarDays, Info, MessageCircle, NotebookPen, TrendingUp, User,
 } from "lucide-react";
 
 const TABS = [
@@ -17,6 +17,7 @@ const TABS = [
 
 const MORE = [
   { href: "/library", label: "Library", icon: BookOpen },
+  { href: "/about", label: "About", icon: Info },
   { href: "/profile", label: "Profile", icon: User },
 ];
 
@@ -102,6 +103,9 @@ function isActive(pathname: string, href: string): boolean {
   // Recipe editing still lives under /cookbook, and /ingest feeds the Library.
   if (href === "/library")
     return pathname.startsWith("/library") || pathname.startsWith("/cookbook") || pathname === "/ingest";
+  // Exact match: /about has no sub-routes, so this only lights up on the
+  // tutorial itself, never on Library.
+  if (href === "/about") return pathname === "/about";
   return pathname.startsWith(href);
 }
 
