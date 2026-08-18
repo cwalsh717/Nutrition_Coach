@@ -1,23 +1,14 @@
-// Week identity and staging. Pure functions over ISO date strings so the
-// labels and stage rules can be tested without a database or a clock.
+// Week identity and lifecycle. Pure functions over ISO date strings so the
+// labels and freeze rules can be tested without a database or a clock.
 //
 // A week is just a start date plus how many days it covers. Which week you're
 // "in" is derived from today's date — never stored — so nothing goes stale.
+// The stored status column is legacy from the stage-stepper era: nothing
+// writes it anymore, but old "done" rows still mean "the user closed this".
 
 import { dbDateToKey } from "./dates";
 
 export type WeekStatus = "planning" | "shopping" | "cooking" | "done";
-
-export const STAGES: { status: WeekStatus; label: string }[] = [
-  { status: "planning", label: "Plan" },
-  { status: "shopping", label: "Shop" },
-  { status: "cooking", label: "Cook" },
-  { status: "done", label: "Done" },
-];
-
-export function stageIndex(status: WeekStatus): number {
-  return STAGES.findIndex((s) => s.status === status);
-}
 
 /** "done" = you closed it. "passed" = time closed it. */
 export type FreezeReason = "done" | "passed";
@@ -34,19 +25,13 @@ function startKey(weekOf: string | Date): string {
   return typeof weekOf === "string" ? weekOf : dbDateToKey(weekOf);
 }
 
-/** The list is a finished artifact once shopping is behind you. */
-export function isListLocked(status: WeekStatus): boolean {
-  return stageIndex(status) > stageIndex("shopping");
-}
-
 /**
  * Why a week is read-only, or null if it's still live.
  *
  * Two ways a week closes: you closed it, or time did. Most weeks never get a
  * closing ceremony — they just end — so the calendar is the honest authority.
  * Through its own last day a week stays editable; it freezes at the user's
- * midnight after. Deliberately looser than isListLocked (a cooking week's
- * MEALS can still change even though its LIST is a finished artifact).
+ * midnight after. The list is editable exactly as long as the week is.
  *
  * The ONE source of truth for the freeze: never inline a status or date check
  * anywhere else.
@@ -71,16 +56,6 @@ export function displayStatus(week: FreezableWeek, today: string): WeekStatus | 
   if (frozen === "done") return "done";
   if (frozen === "passed") return "closed";
   return week.status;
-}
-
-export function nextStage(status: WeekStatus): WeekStatus | null {
-  const i = stageIndex(status);
-  return i < 0 || i >= STAGES.length - 1 ? null : STAGES[i + 1].status;
-}
-
-export function previousStage(status: WeekStatus): WeekStatus | null {
-  const i = stageIndex(status);
-  return i <= 0 ? null : STAGES[i - 1].status;
 }
 
 /* ---------------- dates ---------------- */

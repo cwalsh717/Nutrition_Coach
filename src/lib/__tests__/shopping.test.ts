@@ -65,19 +65,22 @@ describe("formatItem", () => {
 });
 
 describe("groupByDepartment + asPlainText", () => {
-  it("walks the store in order and appends the kcal total", () => {
+  it("walks the store in order — and no kcal footer: a grocery list is a grocery list", () => {
     const groups = groupByDepartment([
       { name: "frozen peas", qty: 1, unit: "bag", department: "Frozen" },
       { name: "broccoli", qty: 2, unit: "head", department: "Produce" },
     ]);
     expect(groups.map((g) => g.department)).toEqual(["Produce", "Frozen"]);
-    const text = asPlainText(groups, 15200);
+    const text = asPlainText(groups);
     expect(text).toContain("== Produce ==");
     expect(text.indexOf("Produce")).toBeLessThan(text.indexOf("Frozen"));
-    expect(text).toContain("Estimated week total: 15,200 kcal");
+    expect(text).not.toContain("kcal");
   });
 
-  it("omits the total line when no target math exists", () => {
-    expect(asPlainText([], null)).not.toContain("Estimated");
+  it("appends a manual row's note in parentheses", () => {
+    const groups = groupByDepartment([
+      { name: "paper towels", qty: null, unit: "", department: "Other", note: "big pack" },
+    ]);
+    expect(asPlainText(groups)).toContain("paper towels (big pack)");
   });
 });

@@ -4,15 +4,13 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { freezeReason, nextStage, previousStage, weekEnd, type WeekStatus } from "@/lib/weeks";
+import { freezeReason, weekEnd } from "@/lib/weeks";
 import { todayIso } from "@/lib/queries";
 
 function revalidateWeekPages() {
   revalidatePath("/week");
-  revalidatePath("/week/list");
   revalidatePath("/track");
   revalidatePath("/week/chat");
-  revalidatePath("/weeks");
   revalidatePath("/progress");
 }
 
@@ -25,12 +23,11 @@ async function ownedWeek(weekId: string) {
 }
 
 const FROZEN_DONE =
-  "This week is closed — its numbers are history. Reopen it with Revert to make changes.";
+  "This week is closed — its numbers are history.";
 const FROZEN_PAST =
   "This week has passed — its numbers are history now. If the dates were wrong, re-date it.";
 
-/** The refusal that matches WHY the week is frozen: Revert can reopen a week
- *  you closed, but it can't thaw time. */
+/** The refusal that matches WHY the week is frozen. */
 function frozenError(reason: "done" | "passed"): Error {
   return new Error(reason === "done" ? FROZEN_DONE : FROZEN_PAST);
 }
@@ -48,7 +45,7 @@ async function editableOwnedWeek(weekId: string) {
 /**
  * Re-dating is the ONE thing a lapsed week still allows — it's the only fix
  * for a week created with the wrong dates, and a week that freezes with no
- * escape is a trap. A week you closed on purpose stays closed: Revert first.
+ * escape is a trap. A week closed in the old stage system stays closed.
  */
 async function redatableOwnedWeek(weekId: string) {
   const loaded = await ownedWeek(weekId);
@@ -67,19 +64,6 @@ async function ownedEditableWeekRecipe(weekRecipeId: string) {
   const frozen = freezeReason(wr.week, await todayIso());
   if (frozen) throw frozenError(frozen);
   return wr;
-}
-
-/** A week's staple row, owned and on an editable week — or null. */
-async function ownedEditableWeekStaple(weekStapleId: string) {
-  const user = await requireUser();
-  const ws = await db.weekStaple.findUnique({
-    where: { id: weekStapleId },
-    include: { week: true },
-  });
-  if (!ws || ws.week.userId !== user.id) return null;
-  const frozen = freezeReason(ws.week, await todayIso());
-  if (frozen) throw frozenError(frozen);
-  return ws;
 }
 
 /** The weekly target, prorated for however many days this week covers. */
@@ -151,41 +135,21 @@ export async function updateWeekDates(formData: FormData) {
   revalidateWeekPages();
 }
 
-/** Move a week forward one stage: plan → shop → cook → done. */
-export async function advanceStage(weekId: string) {
-  const { week } = await ownedWeek(weekId);
-  // The calendar has the last word: you can't shop for a week that ended.
-  if (freezeReason(week, await todayIso()) === "passed") throw new Error(FROZEN_PAST);
-  const next = nextStage(week.status as WeekStatus);
-  if (!next) return;
-
-  await db.week.update({
-    where: { id: week.id },
-    data: {
-      status: next,
-      // Entering "cooking" means the shopping is done, so stamp the list as
-      // produced if the user never pressed anything explicit.
-      ...(next === "cooking" && week.listFinalizedAt === null
-        ? { listFinalizedAt: new Date() }
-        : {}),
-    },
-  });
-  revalidateWeekPages();
-}
-
-/** Escape hatch — nobody should be trapped in a stage they entered by mistake. */
-export async function revertStage(weekId: string) {
-  const { week } = await ownedWeek(weekId);
-  // Revert reopens a week you closed; it can't reopen one time closed.
-  if (freezeReason(week, await todayIso()) === "passed") throw new Error(FROZEN_PAST);
-  const prev = previousStage(week.status as WeekStatus);
-  if (!prev) return;
-  await db.week.update({ where: { id: week.id }, data: { status: prev } });
-  revalidateWeekPages();
-}
-
+/**
+ * Delete a week created by mistake. Only an EMPTY week qualifies — no recipes
+ * planned and nothing added to its list by hand. The UI hides the button on
+ * non-empty weeks, but the guard lives here: hiding a button is never the gate.
+ * (Derived list rows don't block: they only exist while recipes do.)
+ */
 export async function deleteWeek(weekId: string) {
   const { week } = await ownedWeek(weekId);
+  const [recipeCount, manualCount] = await Promise.all([
+    db.weekRecipe.count({ where: { weekId: week.id } }),
+    db.shoppingListItem.count({ where: { weekId: week.id, manual: true } }),
+  ]);
+  if (recipeCount > 0 || manualCount > 0) {
+    throw new Error("This week has contents — remove them before deleting it.");
+  }
   await db.week.delete({ where: { id: week.id } });
   revalidateWeekPages();
   redirect("/week");
@@ -229,44 +193,3 @@ export async function removeRecipeFromWeek(weekRecipeId: string) {
   revalidateWeekPages();
 }
 
-/** Snapshot-copy a staple from the library onto a week. */
-export async function addStapleToWeek(weekId: string, stapleId: string, qty?: number) {
-  const { user, week } = await editableOwnedWeek(weekId);
-  const staple = await db.staple.findFirst({
-    where: { id: stapleId, userId: user.id, kind: "grocery" },
-  });
-  if (!staple) return;
-  await db.weekStaple.create({
-    data: {
-      weekId: week.id,
-      stapleId: staple.id,
-      name: staple.name,
-      kcal: staple.kcal,
-      proteinG: staple.proteinG,
-      department: staple.department,
-      qty:
-        qty !== undefined && Number.isFinite(qty)
-          ? Math.max(1, Math.round(qty))
-          : staple.defaultQty,
-    },
-  });
-  revalidateWeekPages();
-}
-
-export async function updateWeekStapleQty(weekStapleId: string, qty: number) {
-  if (!Number.isFinite(qty)) return;
-  const ws = await ownedEditableWeekStaple(weekStapleId);
-  if (!ws) return;
-  await db.weekStaple.update({
-    where: { id: ws.id },
-    data: { qty: Math.max(1, Math.round(qty)) },
-  });
-  revalidateWeekPages();
-}
-
-export async function removeWeekStaple(weekStapleId: string) {
-  const ws = await ownedEditableWeekStaple(weekStapleId);
-  if (!ws) return;
-  await db.weekStaple.delete({ where: { id: ws.id } });
-  revalidateWeekPages();
-}

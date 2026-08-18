@@ -189,7 +189,10 @@ export type WeekFull = NonNullable<Awaited<ReturnType<typeof getWeekFull>>>;
 /** Kept as the old name so existing call sites stay readable. */
 export type ActiveWeekFull = WeekFull;
 
-/** Math inputs from a loaded week — shared by the week page, list page, and coach. */
+/** Math inputs from a loaded week — shared by the Plan page and the coach.
+ *  Recipes only: prepped meals are what the plan claims; everything else is
+ *  tracked when eaten. (The archive page still sums legacy WeekStaple rows for
+ *  weeks planned under the old model — it calls weekTotals directly.) */
 export function computeWeekTotals(week: ActiveWeekFull) {
   return weekTotals(
     week.recipes.map((wr) => ({
@@ -198,21 +201,19 @@ export function computeWeekTotals(week: ActiveWeekFull) {
       kcalPerServing: wr.recipe.kcalPerServing,
       proteinG: wr.recipe.proteinG,
     })),
-    week.staples.map((ws) => ({
-      name: ws.name,
-      qty: ws.qty,
-      kcal: ws.kcal,
-      proteinG: ws.proteinG,
-    })),
+    [],
     {
       budgetKcal: week.budgetKcal,
       proteinLowGDay: week.proteinLowGDay,
       proteinHighGDay: week.proteinHighGDay,
     },
+    week.dayCount,
   );
 }
 
-/** Scaled candidate rows for the shopping list builder. */
+/** What the plan implies at the store: the recipes' ingredients, scaled by
+ *  portions. The only feed for the live list's derived rows — foods join the
+ *  list as manual rows the user taps in, never as candidates. */
 export function candidateRows(week: ActiveWeekFull): CandidateRow[] {
   const rows: CandidateRow[] = [];
   for (const wr of week.recipes) {
@@ -228,16 +229,6 @@ export function candidateRows(week: ActiveWeekFull): CandidateRow[] {
       });
     }
   }
-  for (const ws of week.staples) {
-    rows.push({
-      name: ws.name,
-      qty: ws.qty,
-      unit: "",
-      department: ws.department,
-      source: "staple",
-      likelyHave: false, // the user explicitly chose it for this week
-    });
-  }
   return rows;
 }
 
@@ -250,7 +241,7 @@ export function buildWeekStateSection(
 ): string {
   const totals = computeWeekTotals(week);
   const lines: string[] = [
-    `Week of ${week.weekOf.toISOString().slice(0, 10)} (status: ${displayStatus(week, today)}).`,
+    `Week of ${week.weekOf.toISOString().slice(0, 10)} (status: ${displayStatus(week, today)}). Covers ${week.dayCount} day${week.dayCount === 1 ? "" : "s"}.`,
     "",
     "Planned recipes:",
   ];
@@ -260,50 +251,52 @@ export function buildWeekStateSection(
       `  - ${wr.recipe.name}: ${wr.portions} portions x ${wr.recipe.kcalPerServing} kcal, ${wr.recipe.proteinG} g protein/portion`,
     );
   }
-  lines.push("", "Staples/fillers this week:");
-  if (week.staples.length === 0) lines.push("  (none yet)");
-  for (const ws of week.staples) {
-    const macros = ws.kcal === null ? "no macro data" : `${ws.kcal} kcal, ${ws.proteinG ?? 0} g protein each`;
-    lines.push(`  - ${ws.name}: ${ws.qty}/week (${macros})`);
-  }
 
+  // The plan is availability engineering, not calorie pre-planning: state what
+  // the prepped meals add up to and what the bank is, never how "full" the
+  // plan is — nothing nags the user to plan more.
   lines.push("");
-  if (week.budgetKcal !== null) {
-    lines.push(
-      `Calorie bank: recipes ${totals.recipeKcal} + staples ${totals.stapleKcal} = ${totals.totalKcal} of ${week.budgetKcal} kcal planned (${totals.bankGap} kcal unfilled).`,
-    );
-  } else {
-    lines.push(
-      `Planned calories: recipes ${totals.recipeKcal} + staples ${totals.stapleKcal} = ${totals.totalKcal} kcal. The user has not set a weekly bank target.`,
-    );
-  }
+  lines.push(
+    week.budgetKcal !== null
+      ? `Prepped meals planned: ${totals.recipeKcal} kcal. Weekly bank: ${week.budgetKcal} kcal.`
+      : `Prepped meals planned: ${totals.recipeKcal} kcal. The user has not set a weekly bank target.`,
+  );
   if (week.proteinLowGDay !== null) {
     lines.push(
-      `Protein: ${totals.totalProtein} g planned = ~${totals.proteinPerDay} g/day vs their ${week.proteinLowGDay}${week.proteinHighGDay ? `-${week.proteinHighGDay}` : ""} g/day target.`,
+      `Protein planned: ${totals.totalProtein} g (~${totals.proteinPerDay} g/day) vs their ${week.proteinLowGDay}${week.proteinHighGDay ? `-${week.proteinHighGDay}` : ""} g/day target.`,
     );
   } else {
     lines.push(`Protein planned: ${totals.totalProtein} g (~${totals.proteinPerDay} g/day). No protein target set.`);
   }
 
-  // Shopping list state
+  // Weeks planned before the live-list rework carried staple snapshots.
+  if (week.staples.length > 0) {
+    lines.push("", "Legacy staples on this week:");
+    for (const ws of week.staples) {
+      const macros = ws.kcal === null ? "no macro data" : `${ws.kcal} kcal, ${ws.proteinG ?? 0} g protein each`;
+      lines.push(`  - ${ws.name}: ${ws.qty}/week (${macros})`);
+    }
+  }
+
+  // Shopping list state. Derived rows mirror the recipes on their own; manual
+  // rows are things the user added by hand.
   const items = week.listItems;
   if (items.length === 0) {
-    lines.push("", "Shopping list: not built yet.");
+    lines.push("", "Shopping list: empty.");
   } else {
-    const need = items.filter((i) => i.status === "need").length;
+    const need = items.filter((i) => i.status === "need");
     const have = items.filter((i) => i.status === "have").length;
     const unreviewed = items.filter((i) => i.status === "unreviewed").length;
+    const manual = items.filter((i) => i.manual).length;
     lines.push(
       "",
-      `Shopping list: ${items.length} items — ${need} to buy, ${have} already have, ${unreviewed} unreviewed.`,
+      `Shopping list: ${items.length} items — ${need.length} to buy, ${have} already have, ${unreviewed} unreviewed` +
+        (manual > 0 ? ` (${manual} added by hand)` : "") +
+        ".",
     );
-    if (need > 0) {
+    if (need.length > 0) {
       lines.push(
-        "To buy: " +
-          items
-            .filter((i) => i.status === "need")
-            .map((i) => i.name)
-            .join("; "),
+        "To buy: " + need.map((i) => (i.note ? `${i.name} (${i.note})` : i.name)).join("; "),
       );
     }
   }

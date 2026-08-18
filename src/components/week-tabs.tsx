@@ -10,7 +10,7 @@ interface Props {
   weeks: WeekLike[];
   selectedId: string | null;
   today: string;
-  /** "/week", "/week/list" or "/week/chat" — tabs keep you on the same page. */
+  /** "/week" or "/week/chat" — tabs keep you on the same page. */
   basePath: string;
 }
 

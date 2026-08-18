@@ -39,7 +39,6 @@ function fieldsFromForm(formData: FormData) {
 function revalidateAll() {
   revalidatePath("/library");
   revalidatePath("/week");
-  revalidatePath("/week/list");
   revalidatePath("/track");
 }
 

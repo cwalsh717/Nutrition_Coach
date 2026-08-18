@@ -48,9 +48,14 @@ export function ListReview({ weekId, items }: { weekId: string; items: ReviewIte
             : `${unreviewed} of ${optimistic.length} still unreviewed.`}
         </p>
         {unreviewed > 0 && (
-          <form action={markRemaining.bind(null, weekId, "need")}>
-            <Button variant="outline" size="sm">Mark remaining as Need</Button>
-          </form>
+          <div className="flex gap-2">
+            <form action={markRemaining.bind(null, weekId, "have")}>
+              <Button variant="outline" size="sm">Mark remaining as Have</Button>
+            </form>
+            <form action={markRemaining.bind(null, weekId, "need")}>
+              <Button variant="outline" size="sm">Mark remaining as Need</Button>
+            </form>
+          </div>
         )}
       </div>
 

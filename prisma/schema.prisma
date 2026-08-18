@@ -247,6 +247,9 @@ model Week {
   userId String
   user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   weekOf DateTime   @db.Date
+  // DORMANT: the stage machinery died with the live-list rework. Legacy "done"
+  // rows still freeze a week (lib/weeks.ts freezeReason); nothing writes this
+  // column anymore.
   status WeekStatus @default(planning)
 
   // Copied from the profile at creation so a finished week keeps its numbers
@@ -258,8 +261,8 @@ model Week {
   dayCount        Int  @default(7) // 1-7; < 7 when you start mid-week
 
   createdAt       DateTime  @default(now())
-  listBuiltAt     DateTime?
-  listFinalizedAt DateTime?
+  listBuiltAt     DateTime? // DORMANT: build/finalize ceremony removed
+  listFinalizedAt DateTime? // DORMANT: still rendered on old archives
 
   recipes      WeekRecipe[]
   staples      WeekStaple[]
@@ -280,8 +283,10 @@ model WeekRecipe {
   @@unique([weekId, recipeId])
 }
 
-// Snapshot copy of a staple as picked for one week — a done week's numbers
-// never change retroactively, even if the library entry is edited or deleted.
+// DORMANT since the live-list rework: weeks no longer take staple snapshots
+// (foods join a week as manual ShoppingListItem rows instead). Kept so weeks
+// planned before the rework still render their staples; no new rows are ever
+// written.
 model WeekStaple {
   id         String  @id @default(cuid())
   weekId     String
@@ -301,7 +306,11 @@ enum ItemStatus {
   need
 }
 
-// These rows ARE the shopping list snapshot — value copies, not references.
+// These rows ARE the shopping list — value copies, not references. While a
+// week is editable, `manual: false` rows are kept mirroring the week's recipes
+// by reconciliation (lib/list-reconcile.ts); `manual: true` rows belong to the
+// user and reconciliation never touches them. Once the week freezes, the rows
+// are the snapshot of the list that was shopped.
 model ShoppingListItem {
   id         String     @id @default(cuid())
   weekId     String
@@ -314,6 +323,8 @@ model ShoppingListItem {
   likelyHave Boolean    @default(false) // sorts review order only; user decides
   status     ItemStatus @default(unreviewed)
   sortOrder  Int        @default(0)
+  manual     Boolean    @default(false) // user-added; reconciliation never touches
+  note       String     @default("") // free text on manual rows: "2 boxes"
 
   @@index([weekId])
 }

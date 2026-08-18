@@ -110,19 +110,18 @@ export function groupByDepartment<T extends { department: string; name: string }
   return groups;
 }
 
-/** Plain-text export for pasting into a ShopRite pickup order. */
+/** Plain-text export for pasting into a ShopRite pickup order. A grocery list
+ *  is a grocery list — no calorie math tags along. */
 export function asPlainText(
-  groups: DeptGroup<{ qty: number | null; unit: string; name: string; department: string }>[],
-  estimatedWeekKcal: number | null,
+  groups: DeptGroup<{ qty: number | null; unit: string; name: string; department: string; note?: string }>[],
 ): string {
   const lines: string[] = [];
   for (const group of groups) {
     lines.push(`== ${group.department} ==`);
-    for (const item of group.items) lines.push(formatItem(item));
+    for (const item of group.items) {
+      lines.push(item.note ? `${formatItem(item)} (${item.note})` : formatItem(item));
+    }
     lines.push("");
-  }
-  if (estimatedWeekKcal !== null) {
-    lines.push(`Estimated week total: ${estimatedWeekKcal.toLocaleString()} kcal`);
   }
   return lines.join("\n").trim();
 }

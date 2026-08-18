@@ -32,6 +32,15 @@ describe("weekTotals", () => {
     expect(t.bankGap).toBeNull();
     expect(t.proteinGapPerDay).toBeNull();
   });
+
+  it("divides protein by the days the week actually covers, not always 7", () => {
+    // 684 g over a 5-day week is ~137 g/day, not the 98 the /7 bug reported.
+    const t = weekTotals(recipes, staples, {
+      budgetKcal: 16000, proteinLowGDay: 150, proteinHighGDay: 175,
+    }, 5);
+    expect(t.proteinPerDay).toBe(137);
+    expect(t.proteinGapPerDay).toBe(13);
+  });
 });
 
 describe("diaryTotals", () => {

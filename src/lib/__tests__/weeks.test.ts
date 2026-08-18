@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   calendarWeekDays, calendarWeekStart, classify, coversDate, currentWeek,
-  defaultWeek, displayStatus, freezeReason, isListLocked, isWeekEditable,
-  nextStage, previousStage, rangeLabel, relativeLabel, tabOrder, weekEnd,
+  defaultWeek, displayStatus, freezeReason, isWeekEditable,
+  rangeLabel, relativeLabel, tabOrder, weekEnd,
   type WeekLike,
 } from "../weeks";
 
@@ -58,23 +58,6 @@ describe("labels", () => {
   });
   it("counts further-out weeks", () => {
     expect(relativeLabel("2026-08-23", 7, TODAY)).toBe("In 3 weeks");
-  });
-});
-
-describe("stages", () => {
-  it("advances and reverses through the four stages", () => {
-    expect(nextStage("planning")).toBe("shopping");
-    expect(nextStage("cooking")).toBe("done");
-    expect(nextStage("done")).toBeNull();
-    expect(previousStage("shopping")).toBe("planning");
-    expect(previousStage("planning")).toBeNull();
-  });
-
-  it("locks the list only once shopping is behind you", () => {
-    expect(isListLocked("planning")).toBe(false);
-    expect(isListLocked("shopping")).toBe(false);
-    expect(isListLocked("cooking")).toBe(true);
-    expect(isListLocked("done")).toBe(true);
   });
 });
 

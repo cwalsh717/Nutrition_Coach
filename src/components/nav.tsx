@@ -5,13 +5,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import {
-  BookOpen, CalendarDays, History, MessageCircle, NotebookPen,
-  ShoppingCart, TrendingUp, User,
+  BookOpen, CalendarDays, MessageCircle, NotebookPen, TrendingUp, User,
 } from "lucide-react";
 
 const TABS = [
-  { href: "/week", label: "Week", icon: CalendarDays },
-  { href: "/week/list", label: "Shop", icon: ShoppingCart },
+  { href: "/week", label: "Plan", icon: CalendarDays },
   { href: "/track", label: "Track", icon: NotebookPen },
   { href: "/progress", label: "Progress", icon: TrendingUp },
   { href: "/week/chat", label: "Coach", icon: MessageCircle },
@@ -19,7 +17,6 @@ const TABS = [
 
 const MORE = [
   { href: "/library", label: "Library", icon: BookOpen },
-  { href: "/weeks", label: "History", icon: History },
   { href: "/profile", label: "Profile", icon: User },
 ];
 
@@ -99,8 +96,9 @@ export function BottomTabs() {
 }
 
 function isActive(pathname: string, href: string): boolean {
-  // Exact match beats prefix so /week doesn't light up on /week/list.
-  if (href === "/week") return pathname === "/week";
+  // Exact match beats prefix so Plan doesn't light up on /week/chat. Archive
+  // pages (/weeks/[id]) count as Plan — they're the Past-weeks drawer's leaves.
+  if (href === "/week") return pathname === "/week" || pathname.startsWith("/weeks");
   // Recipe editing still lives under /cookbook, and /ingest feeds the Library.
   if (href === "/library")
     return pathname.startsWith("/library") || pathname.startsWith("/cookbook") || pathname === "/ingest";

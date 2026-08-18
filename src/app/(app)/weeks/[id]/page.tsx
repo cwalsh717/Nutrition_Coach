@@ -6,11 +6,10 @@ import { getFoodLogForWeek, getWeekFull, todayIso } from "@/lib/queries";
 import { weekTotals } from "@/lib/weekmath";
 import { asPlainText, groupByDepartment } from "@/lib/shopping";
 import { CopyButton } from "@/components/copy-button";
-import { WeekStepper } from "@/components/week-stage";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { rangeLabel, relativeLabel, type WeekStatus, displayStatus } from "@/lib/weeks";
+import { rangeLabel, relativeLabel, displayStatus } from "@/lib/weeks";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +27,6 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
 
   const today = await todayIso();
   const weekOf = week.weekOf.toISOString().slice(0, 10);
-  const status = week.status as WeekStatus;
   const shown = displayStatus(week, today);
   const totals = weekTotals(
     week.recipes.map((wr) => ({
@@ -43,6 +41,7 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
       proteinLowGDay: week.proteinLowGDay,
       proteinHighGDay: week.proteinHighGDay,
     },
+    week.dayCount,
   );
 
   const needItems = week.listItems.filter((i) => i.status === "need");
@@ -67,8 +66,6 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
           </Button>
         </div>
       </div>
-
-      <WeekStepper status={status} />
 
       <Card>
         <CardHeader><CardTitle>How it went</CardTitle></CardHeader>
@@ -152,7 +149,7 @@ export default async function WeekArchivePage({ params }: { params: Promise<{ id
                   ))}
                 </div>
               ))}
-              <CopyButton text={asPlainText(needGroups, totals.totalKcal)} />
+              <CopyButton text={asPlainText(needGroups)} />
             </>
           )}
         </CardContent>

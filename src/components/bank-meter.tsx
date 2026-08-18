@@ -1,6 +1,10 @@
 // The calorie bank, calm-premium style: a thin parchment ring with the number
 // that matters in the middle, and the supporting numbers in a quiet row below.
 // Server component — pure display. No target set → planned total only, no judgment.
+//
+// LANDING-PAGE ONLY since the Plan rework: inside the app the bank is a quiet
+// text barometer, not a ring — nothing may nag the user to "fill" the plan.
+// This survives purely as the marketing demo on the public landing page.
 
 import { cn } from "@/lib/utils";
 

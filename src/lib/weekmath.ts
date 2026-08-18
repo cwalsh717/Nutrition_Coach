@@ -22,7 +22,13 @@ export interface WeekTargets {
   proteinHighGDay: number | null;
 }
 
-export function weekTotals(recipes: RecipeLine[], staples: StapleLine[], targets: WeekTargets) {
+export function weekTotals(
+  recipes: RecipeLine[],
+  staples: StapleLine[],
+  targets: WeekTargets,
+  /** How many days the week covers — a 5-day week eats its protein in 5. */
+  dayCount = 7,
+) {
   const recipeKcal = recipes.reduce((sum, r) => sum + r.portions * r.kcalPerServing, 0);
   const recipeProtein = recipes.reduce((sum, r) => sum + r.portions * r.proteinG, 0);
   const stapleKcal = staples.reduce((sum, s) => sum + s.qty * (s.kcal ?? 0), 0);
@@ -30,7 +36,7 @@ export function weekTotals(recipes: RecipeLine[], staples: StapleLine[], targets
 
   const totalKcal = recipeKcal + stapleKcal;
   const totalProtein = recipeProtein + stapleProtein;
-  const proteinPerDay = Math.round(totalProtein / 7);
+  const proteinPerDay = Math.round(totalProtein / Math.max(1, dayCount));
 
   return {
     recipeKcal,
