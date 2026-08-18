@@ -10,6 +10,7 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 const fraunces = Fraunces({ variable: "--font-display", subsets: ["latin"] });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://groceryshopping.coach"),
   title: "Prep Coach",
   description: "Plan the week, bank the calories, shop once.",
 };

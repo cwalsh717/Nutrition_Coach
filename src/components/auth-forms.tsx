@@ -86,6 +86,9 @@ export function LoginForm() {
         <p className="text-sm text-muted-foreground text-center">
           New here? <Link className="underline" href="/signup">Create an account</Link>
         </p>
+        <p className="text-xs text-muted-foreground text-center">
+          <Link className="underline" href="/about">See how Prep Coach works</Link>
+        </p>
       </form>
     </AuthShell>
   );

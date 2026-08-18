@@ -9,9 +9,12 @@ import { getSessionCookie } from "better-auth/cookies";
  * deleting requireUser() calls would.
  */
 export function middleware(request: NextRequest) {
-  // The landing page is the one thing a logged-out visitor is meant to see,
-  // and / decides for itself where a session should go.
-  if (request.nextUrl.pathname === "/") return NextResponse.next();
+  // The landing page and the tutorial are the things a logged-out visitor is
+  // meant to see, and each decides for itself whether a session changes
+  // anything — never bounce either one to /login.
+  if (request.nextUrl.pathname === "/" || request.nextUrl.pathname === "/about") {
+    return NextResponse.next();
+  }
 
   const cookie = getSessionCookie(request);
   if (!cookie) {
@@ -23,6 +26,6 @@ export function middleware(request: NextRequest) {
 export const config = {
   // Everything except auth pages, auth API, and static assets.
   matcher: [
-    "/((?!login|signup|api/auth|_next/static|_next/image|favicon.ico).*)",
+    "/((?!login|signup|about|api/auth|_next/static|_next/image|favicon.ico).*)",
   ],
 };

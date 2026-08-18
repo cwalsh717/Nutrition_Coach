@@ -6,11 +6,35 @@
 // The one hand-built piece is the Need/Have row, because the real one is a
 // client component wired to server actions.
 
+import type { Metadata } from "next";
 import Link from "next/link";
 import { BankMeter } from "@/components/bank-meter";
 import { DailyChart, GoalRaceBar, type DayBar } from "@/components/charts";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+const LANDING_TITLE = "Prep Coach — plan the week, bank the calories, shop once";
+const LANDING_DESCRIPTION =
+  "A meal-prep planner and food diary built around a weekly calorie bank. " +
+  "Plan the week, review the shopping list item by item, and track what you actually eat.";
+
+// Shared by every route that renders <Landing/> (`/` and `/about`) so the
+// two pages can't drift apart.
+export const landingMetadata: Metadata = {
+  title: LANDING_TITLE,
+  description: LANDING_DESCRIPTION,
+  openGraph: {
+    title: LANDING_TITLE,
+    description: LANDING_DESCRIPTION,
+    siteName: "Prep Coach",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: LANDING_TITLE,
+    description: LANDING_DESCRIPTION,
+  },
+};
 
 // A plausible week: 12,400 kcal of recipes + 3,860 of staples against a
 // 17,500 bank leaves 1,240 still to plan.
@@ -26,7 +50,7 @@ const DEMO_DAYS: DayBar[] = [
   { label: "Sun", kcal: 2050, state: "logged" },
 ];
 
-export function Landing() {
+export function Landing({ hasSession = false }: { hasSession?: boolean }) {
   return (
     <>
       <header className="border-b">
@@ -44,7 +68,7 @@ export function Landing() {
       </header>
 
       <main className="flex-1">
-        <Hero />
+        <Hero hasSession={hasSession} />
         <Loop />
         <Principles />
         <Ai />
@@ -54,12 +78,20 @@ export function Landing() {
         <div className="mx-auto flex max-w-4xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-6 text-sm">
           <span className="font-display italic text-primary">Prep Coach</span>
           <div className="ml-auto flex items-center gap-4">
-            <Link href="/signup" className="text-muted-foreground hover:text-foreground">
-              Sign up
-            </Link>
-            <Link href="/login" className="text-muted-foreground hover:text-foreground">
-              Log in
-            </Link>
+            {hasSession ? (
+              <Link href="/" className="text-muted-foreground hover:text-foreground">
+                Open Prep Coach
+              </Link>
+            ) : (
+              <>
+                <Link href="/signup" className="text-muted-foreground hover:text-foreground">
+                  Sign up
+                </Link>
+                <Link href="/login" className="text-muted-foreground hover:text-foreground">
+                  Log in
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </footer>
@@ -69,7 +101,7 @@ export function Landing() {
 
 /* ---------------- Hero ---------------- */
 
-function Hero() {
+function Hero({ hasSession }: { hasSession: boolean }) {
   return (
     <section className="mx-auto max-w-4xl px-4 py-12 sm:py-20">
       <div className="grid items-center gap-10 md:grid-cols-[1fr_auto] md:gap-12">
@@ -82,16 +114,26 @@ function Hero() {
             overeat a day. It&rsquo;s hard to overeat a week you planned, bought, and are watching.
           </p>
           <div className="mt-7 flex flex-wrap items-center gap-3">
-            <Button asChild size="lg">
-              <Link href="/signup">Create an account</Link>
-            </Button>
-            <Button asChild size="lg" variant="outline">
-              <Link href="/login">Log in</Link>
-            </Button>
+            {hasSession ? (
+              <Button asChild size="lg">
+                <Link href="/">Open Prep Coach</Link>
+              </Button>
+            ) : (
+              <>
+                <Button asChild size="lg">
+                  <Link href="/signup">Create an account</Link>
+                </Button>
+                <Button asChild size="lg" variant="outline">
+                  <Link href="/login">Log in</Link>
+                </Button>
+              </>
+            )}
           </div>
-          <p className="mt-4 text-sm text-muted-foreground">
-            A new account starts empty — no staples, no pantry guesses, no targets you didn&rsquo;t set.
-          </p>
+          {!hasSession && (
+            <p className="mt-4 text-sm text-muted-foreground">
+              A new account starts empty — no staples, no pantry guesses, no targets you didn&rsquo;t set.
+            </p>
+          )}
         </div>
 
         {/* The meter's four-across stat row has a wide min-content; below ~360px it
