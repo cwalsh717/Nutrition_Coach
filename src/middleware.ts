@@ -9,6 +9,10 @@ import { getSessionCookie } from "better-auth/cookies";
  * deleting requireUser() calls would.
  */
 export function middleware(request: NextRequest) {
+  // The landing page is the one thing a logged-out visitor is meant to see,
+  // and / decides for itself where a session should go.
+  if (request.nextUrl.pathname === "/") return NextResponse.next();
+
   const cookie = getSessionCookie(request);
   if (!cookie) {
     return NextResponse.redirect(new URL("/login", request.url));
