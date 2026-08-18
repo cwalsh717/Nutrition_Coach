@@ -24,17 +24,22 @@ export interface DiaryEntry {
   source: "manual" | "advisor";
 }
 
-/** A saved Staple or Quick Eat, ready to log in one tap. */
+/** Anything in the Library that's ready to log in one tap: a grocery, a takeout
+ *  order, or one serving of a recipe. */
 export interface SavedFood {
   id: string;
   name: string;
-  kind: "grocery" | "quick_eat";
+  kind: "grocery" | "quick_eat" | "recipe";
   kcal: number | null;
   proteinG: number | null;
   carbsG: number | null;
   fatG: number | null;
   servingNote: string;
 }
+
+/** How many tap-to-log chips show before the row folds. A big library would
+ *  otherwise bury the day's entries; "Show all" keeps every one reachable. */
+const CHIP_LIMIT = 24;
 
 interface Props {
   days: string[]; // the seven dates of the calendar week being viewed
@@ -62,6 +67,7 @@ export function Diary({
   const [advisorNote, setAdvisorNote] = useState("");
   const [fromAdvisor, setFromAdvisor] = useState(false);
   const [estimating, setEstimating] = useState(false);
+  const [showAllFoods, setShowAllFoods] = useState(false);
   const [pending, startTransition] = useTransition();
 
   const dayEntries = entries.filter((e) => e.date === day);
@@ -126,7 +132,7 @@ export function Diary({
     if (food.kcal === null) {
       setDescription(label);
       setFromAdvisor(false);
-      toast.info(`${food.name} has no calories saved — add them here or on the Foods page.`);
+      toast.info(`${food.name} has no calories saved — add them here or in the Library.`);
       return;
     }
     const form = new FormData();
@@ -267,7 +273,7 @@ export function Diary({
             Tap to log
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {savedFoods.map((food) => (
+            {(showAllFoods ? savedFoods : savedFoods.slice(0, CHIP_LIMIT)).map((food) => (
               <button
                 key={food.id}
                 type="button"
@@ -283,6 +289,15 @@ export function Diary({
                 )}
               </button>
             ))}
+            {!showAllFoods && savedFoods.length > CHIP_LIMIT && (
+              <button
+                type="button"
+                onClick={() => setShowAllFoods(true)}
+                className="rounded-full border border-dashed px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
+              >
+                Show all {savedFoods.length}
+              </button>
+            )}
           </div>
         </div>
       )}

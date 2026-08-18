@@ -42,7 +42,10 @@ export function emptyRecipe(): RecipeFormValues {
 }
 
 interface Props {
-  initial: RecipeFormValues;
+  /** Omit for a blank form. It defaults HERE rather than at the call site
+   *  because emptyRecipe() lives in this "use client" module — a server page
+   *  calling it directly crashes ("cannot invoke a client function"). */
+  initial?: RecipeFormValues;
   rawText?: string;
   action: (formData: FormData) => Promise<void>;
   submitLabel: string;
@@ -59,7 +62,9 @@ interface Row {
   stapleHint: boolean;
 }
 
-export function RecipeForm({ initial, rawText, action, submitLabel, targetWeek }: Props) {
+export function RecipeForm({
+  initial = emptyRecipe(), rawText, action, submitLabel, targetWeek,
+}: Props) {
   const [rows, setRows] = useState<Row[]>(
     initial.ingredients.length > 0
       ? initial.ingredients.map((ing) => ({ ...ing, qty: ing.qty === null ? "" : String(ing.qty) }))

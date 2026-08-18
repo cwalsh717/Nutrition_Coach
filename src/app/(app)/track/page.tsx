@@ -4,6 +4,7 @@ import { getFoodLog, listWeeks, todayIso } from "@/lib/queries";
 import { Diary, type DiaryEntry, type SavedFood } from "@/components/diary";
 import { InfoTip } from "@/components/info-tip";
 import { calendarWeekDays, coversDate } from "@/lib/weeks";
+import { tapToLogOrder } from "@/lib/library";
 
 export const dynamic = "force-dynamic";
 
@@ -27,10 +28,30 @@ export default async function TrackPage({
   const focusDate = /^\d{4}-\d{2}-\d{2}$/.test(d ?? "") ? d! : today;
   const days = calendarWeekDays(focusDate);
 
-  const [entries, weeks, profile, untrackedRows] = await Promise.all([
+  const [entries, weeks, profile, staples, recipes, untrackedRows] = await Promise.all([
     getFoodLog(user.id, days[0], days[6]),
     listWeeks(user.id),
     db.profile.findUnique({ where: { userId: user.id } }),
+    db.staple.findMany({
+      where: { userId: user.id },
+      orderBy: { name: "asc" },
+      select: {
+        id: true, name: true, kind: true, kcal: true,
+        proteinG: true, carbsG: true, fatG: true, servingNote: true,
+      },
+    }),
+    // Retired recipes drop out of the surfaces that suggest food — same promise
+    // the delete guard makes — so they get no chip. Spelled as an explicit OR:
+    // `keeper: { not: false }` would also drop the unrated ones, since SQL's
+    // `keeper <> false` is NULL, not true, for a NULL keeper.
+    db.recipe.findMany({
+      where: { userId: user.id, OR: [{ keeper: true }, { keeper: null }] },
+      orderBy: { name: "asc" },
+      select: {
+        id: true, name: true, kcalPerServing: true,
+        proteinG: true, carbsG: true, fatG: true,
+      },
+    }),
     db.untrackedDay.findMany({
       where: {
         userId: user.id,
@@ -65,22 +86,33 @@ export default async function TrackPage({
     source: e.source,
   }));
 
-  // Quick Eats first — they're the ones logged on the fly.
-  const savedFoods: SavedFood[] = (
-    await db.staple.findMany({
-      where: { userId: user.id },
-      orderBy: [{ kind: "desc" }, { name: "asc" }],
-    })
-  ).map((f) => ({
-    id: f.id,
-    name: f.name,
-    kind: f.kind,
-    kcal: f.kcal,
-    proteinG: f.proteinG,
-    carbsG: f.carbsG,
-    fatG: f.fatG,
-    servingNote: f.servingNote,
-  }));
+  // Takeout first — the ones logged on the fly — then groceries, then recipes.
+  // A recipe chip logs one serving: `servingNote` of "1 serving" is what makes
+  // the diary label read "Chili (1 serving)" through the shared label logic.
+  // Zeroes become null throughout: an unentered macro is unknown, not 0 — and a
+  // recipe with no calories takes the prefill path instead of logging nothing.
+  const savedFoods: SavedFood[] = tapToLogOrder([
+    ...staples.map((f) => ({
+      id: f.id,
+      name: f.name,
+      kind: f.kind,
+      kcal: f.kcal,
+      proteinG: f.proteinG,
+      carbsG: f.carbsG,
+      fatG: f.fatG,
+      servingNote: f.servingNote,
+    })),
+    ...recipes.map((r) => ({
+      id: r.id,
+      name: r.name,
+      kind: "recipe" as const,
+      kcal: r.kcalPerServing || null,
+      proteinG: r.proteinG || null,
+      carbsG: r.carbsG || null,
+      fatG: r.fatG || null,
+      servingNote: "1 serving",
+    })),
+  ]);
 
   return (
     <div className="space-y-4">

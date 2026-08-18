@@ -6,7 +6,7 @@ import { authClient } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
 import {
   BookOpen, CalendarDays, History, MessageCircle, NotebookPen,
-  Package, ShoppingCart, TrendingUp, User,
+  ShoppingCart, TrendingUp, User,
 } from "lucide-react";
 
 const TABS = [
@@ -17,11 +17,9 @@ const TABS = [
   { href: "/week/chat", label: "Coach", icon: MessageCircle },
 ];
 
-// Short nav label; the page itself is titled "Staples & Quick Eats".
 const MORE = [
-  { href: "/cookbook", label: "Recipes", icon: BookOpen },
+  { href: "/library", label: "Library", icon: BookOpen },
   { href: "/weeks", label: "History", icon: History },
-  { href: "/staples", label: "Foods", icon: Package },
   { href: "/profile", label: "Profile", icon: User },
 ];
 
@@ -103,7 +101,9 @@ export function BottomTabs() {
 function isActive(pathname: string, href: string): boolean {
   // Exact match beats prefix so /week doesn't light up on /week/list.
   if (href === "/week") return pathname === "/week";
-  if (href === "/cookbook") return pathname.startsWith("/cookbook") || pathname === "/ingest";
+  // Recipe editing still lives under /cookbook, and /ingest feeds the Library.
+  if (href === "/library")
+    return pathname.startsWith("/library") || pathname.startsWith("/cookbook") || pathname === "/ingest";
   return pathname.startsWith(href);
 }
 

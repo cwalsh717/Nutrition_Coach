@@ -69,7 +69,7 @@ export function IngestFlow({ targetWeek }: { targetWeek: { id: string; label: st
           initial={parsed}
           rawText={rawText}
           action={createRecipe}
-          submitLabel="Save to Cook Book"
+          submitLabel="Save to the Library"
           targetWeek={targetWeek}
         />
       </div>

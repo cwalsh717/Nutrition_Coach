@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
-import { resolveWeek, todayIso } from "@/lib/queries";
+import { todayIso } from "@/lib/queries";
 import { isWeekEditable } from "@/lib/weeks";
 import { DEPARTMENTS, SLOTS } from "@/lib/constants";
 import { parseRecipe, type ParseResult } from "@/lib/claude/parse-recipe";
@@ -104,8 +104,9 @@ export async function createRecipe(formData: FormData) {
     }
   }
 
-  revalidatePath("/cookbook");
-  redirect("/cookbook");
+  revalidatePath("/library");
+  revalidatePath("/track"); // recipes are tap-to-log chips there now
+  redirect("/library");
 }
 
 export async function updateRecipe(recipeId: string, formData: FormData) {
@@ -125,25 +126,38 @@ export async function updateRecipe(recipeId: string, formData: FormData) {
     }),
   ]);
 
-  revalidatePath("/cookbook");
-  redirect("/cookbook");
+  revalidatePath("/library");
+  revalidatePath("/track");
+  redirect("/library");
 }
 
-export async function deleteRecipe(recipeId: string) {
+/**
+ * Returns its refusal instead of throwing. Next redacts thrown server errors in
+ * production, so the guard sentence below would never reach the user on a real
+ * deploy — and on the Library (a client component) an error boundary would also
+ * wipe their search, filters and open editor. The caller toasts `error`.
+ */
+export async function deleteRecipe(
+  recipeId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const user = await requireUser();
   const existing = await db.recipe.findUnique({ where: { id: recipeId } });
-  if (!existing || existing.userId !== user.id) throw new Error("Not your recipe.");
+  if (!existing || existing.userId !== user.id) return { ok: false, error: "Not your recipe." };
   // Weeks hold references, not copies, of recipes — deleting one that any
   // week used would tear a hole in history (and the FK would crash anyway).
   const usedBy = await db.weekRecipe.count({ where: { recipeId } });
   if (usedBy > 0) {
-    throw new Error(
-      `This recipe is part of ${usedBy} week${usedBy === 1 ? "" : "s"} of history. ` +
+    return {
+      ok: false,
+      error:
+        `This recipe is part of ${usedBy} week${usedBy === 1 ? "" : "s"} of history. ` +
         "Retire it instead — retired recipes keep old weeks intact and drop out of planning.",
-    );
+    };
   }
   await db.recipe.delete({ where: { id: recipeId } });
-  revalidatePath("/cookbook");
+  revalidatePath("/library");
+  revalidatePath("/track");
+  return { ok: true };
 }
 
 /** keeper: true = keeper, false = retired, null = back to unrated */
@@ -152,16 +166,6 @@ export async function setKeeper(recipeId: string, keeper: boolean | null) {
   const existing = await db.recipe.findUnique({ where: { id: recipeId } });
   if (!existing || existing.userId !== user.id) throw new Error("Not your recipe.");
   await db.recipe.update({ where: { id: recipeId }, data: { keeper } });
-  revalidatePath("/cookbook");
-}
-
-export async function markCooked(recipeId: string) {
-  const user = await requireUser();
-  const existing = await db.recipe.findUnique({ where: { id: recipeId } });
-  if (!existing || existing.userId !== user.id) throw new Error("Not your recipe.");
-  await db.recipe.update({
-    where: { id: recipeId },
-    data: { timesMade: { increment: 1 }, lastMade: new Date() },
-  });
-  revalidatePath("/cookbook");
+  revalidatePath("/library");
+  revalidatePath("/track"); // retiring a recipe pulls its tap-to-log chip
 }
