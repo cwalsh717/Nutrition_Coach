@@ -7,27 +7,9 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { Landing } from "@/components/landing";
+import { Landing, landingMetadata } from "@/components/landing";
 
-const DESCRIPTION =
-  "A meal-prep planner and food diary built around a weekly calorie bank. " +
-  "Plan the week, review the shopping list item by item, and track what you actually eat.";
-
-export const metadata: Metadata = {
-  title: "Prep Coach — plan the week, bank the calories, shop once",
-  description: DESCRIPTION,
-  openGraph: {
-    title: "Prep Coach — plan the week, bank the calories, shop once",
-    description: DESCRIPTION,
-    siteName: "Prep Coach",
-    type: "website",
-  },
-  twitter: {
-    card: "summary",
-    title: "Prep Coach — plan the week, bank the calories, shop once",
-    description: DESCRIPTION,
-  },
-};
+export const metadata: Metadata = landingMetadata;
 
 export default async function Home() {
   const session = await auth.api.getSession({ headers: await headers() });

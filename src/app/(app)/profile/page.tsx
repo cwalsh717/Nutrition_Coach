@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
 import { getEnergyStatus } from "@/lib/queries";
@@ -54,6 +55,9 @@ export default async function ProfilePage() {
               <div className="text-muted-foreground">
                 Member since {account.createdAt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
               </div>
+              <Link href="/about" className="underline text-muted-foreground hover:text-foreground">
+                How Prep Coach works
+              </Link>
             </div>
             <LogoutButton />
           </div>
