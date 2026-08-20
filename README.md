@@ -1,4 +1,4 @@
-# Prep Coach URL = groceryshopping.coach
+# Prep Coach
 
 Multi-user meal-prep planner with a weekly **calorie bank**: plan recipes and
 staples for the week, review the shopping list item by item (Need / Have),
